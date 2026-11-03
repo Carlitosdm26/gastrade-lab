@@ -9,8 +9,8 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=4">
-  <script src="appClient.js?v=4" defer></script>
+  <link rel="stylesheet" href="styles.css?v=15">
+  <script src="appClient.js?v=14" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -22,9 +22,10 @@
       <div class="workspace-label">WORKSPACE</div>
       <nav class="main-nav">
         <a class="nav-link active" href="#overview"><span class="nav-glyph">01</span> Resumen</a>
-        <a class="nav-link" href="#positions"><span class="nav-glyph">02</span> Posiciones</a>
-        <a class="nav-link" href="#activity"><span class="nav-glyph">03</span> Actividad</a>
-        <a class="nav-link" href="#strategy"><span class="nav-glyph">04</span> Estrategia</a>
+        <a class="nav-link" href="#experiments"><span class="nav-glyph">02</span> Experimentos</a>
+        <a class="nav-link" href="#positions"><span class="nav-glyph">03</span> Posiciones</a>
+        <a class="nav-link" href="#activity"><span class="nav-glyph">04</span> Actividad</a>
+        <a class="nav-link" href="#strategy"><span class="nav-glyph">05</span> Configuración</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="side-note-mark">SIM</div>
@@ -47,15 +48,27 @@
 
       <section class="page-heading" id="overview">
         <div>
-          <div class="eyebrow"><span class="eyebrow-line"></span> SIMULACIÓN AUTOMÁTICA / EUR</div>
-          <h1>Prueba tu estrategia.<br class="mobile-break"> Sin dinero real<span class="heading-period">.</span></h1>
-          <p class="heading-copy">Configura el experimento y sigue su evolución desde aquí.</p>
+          <div class="eyebrow"><span class="eyebrow-line"></span> PAPER TRADING / EUR</div>
+          <h1>Resumen de cartera</h1>
+          <p class="heading-copy">Rendimiento, riesgo y actividad de tus experimentos.</p>
         </div>
         <div class="session-meta">
           <span class="session-label">ESTADO DE SESIÓN</span>
           <span class="session-status status-stopped" id="session-status"><span class="status-pip"></span><span id="session-status-text">Sin iniciar</span></span>
           <span class="session-id" id="session-id">No hay sesión activa</span>
         </div>
+      </section>
+
+      <section class="experiment-workspace" id="experiments" aria-label="Experimentos activos">
+        <div class="workspace-bar-heading">
+          <div>
+            <div class="section-kicker">PAPER TRADING</div>
+            <h2>Espacio de trabajo</h2>
+          </div>
+          <span class="count-label" id="experiment-capacity">0 / 5 ACTIVOS</span>
+        </div>
+        <div class="experiment-tabs" id="experiment-tabs" role="tablist" aria-label="Seleccionar cartera activa" hidden></div>
+        <div class="workspace-empty" id="experiment-empty">No hay experimentos activos</div>
       </section>
 
       <section class="metrics-grid" aria-label="Resumen de cartera">
@@ -89,7 +102,7 @@
         <div class="market-list" id="market-list" aria-live="polite"></div>
       </section>
 
-      <div class="dashboard-grid">
+      <div class="dashboard-grid" id="selected-experiment-view" role="tabpanel" tabindex="0">
         <section class="panel chart-panel" aria-labelledby="chart-title">
           <div class="panel-header chart-header">
             <div>
@@ -98,70 +111,50 @@
             </div>
             <div class="chart-tools">
               <div class="range-switch" role="group" aria-label="Rango del gráfico">
-                <button class="range-button active" type="button" data-range="24h" aria-pressed="true">1D</button>
-                <button class="range-button" type="button" data-range="7d" aria-pressed="false">1S</button>
-                <button class="range-button" type="button" data-range="all" aria-pressed="false">Todo</button>
+                <button class="range-button active" type="button" data-range="24h" aria-label="Últimas 24 horas" title="Últimas 24 horas" aria-pressed="true">1D</button>
+                <button class="range-button" type="button" data-range="7d" aria-label="Última semana" title="Última semana" aria-pressed="false">1S</button>
+                <button class="range-button" type="button" data-range="30d" aria-label="Último mes" title="Último mes" aria-pressed="false">1M</button>
+                <button class="range-button" type="button" data-range="all" aria-label="Todo el experimento" title="Todo el experimento" aria-pressed="false">Todo</button>
               </div>
-              <span class="chart-legend"><i></i> Valor total</span>
+              <div class="chart-legend" aria-label="Leyenda del gráfico">
+                <span><i></i>Valor total</span>
+                <span class="legend-initial"><i></i>Saldo inicial</span>
+              </div>
               <button class="icon-button" id="chart-expand" type="button" title="Ampliar gráfico" aria-label="Ampliar gráfico">+</button>
             </div>
           </div>
-          <div class="chart-summary"><span id="chart-current">€0,00</span><span id="chart-change" class="chart-change">Sin datos</span></div>
-          <div class="chart-wrap"><canvas id="portfolio-chart" role="img" aria-label="Gráfico del valor de la cartera a lo largo del tiempo"></canvas><div class="chart-empty" id="chart-empty"><span class="empty-cross">+</span><span>El gráfico aparecerá al iniciar tu sesión</span></div></div>
+          <div class="chart-summary">
+            <div class="chart-value"><span id="chart-current" class="chart-current">€0,00</span><span id="chart-period-label" class="chart-period-label">1 día</span></div>
+            <span id="chart-change" class="chart-change">Sin datos</span>
+          </div>
+          <div class="chart-stats" aria-label="Estadísticas del periodo">
+            <div><span>Máximo</span><strong id="chart-high">—</strong></div>
+            <div><span>Mínimo</span><strong id="chart-low">—</strong></div>
+            <div><span>Caída máxima</span><strong id="chart-drawdown">—</strong></div>
+          </div>
+          <div class="chart-wrap">
+            <canvas id="portfolio-chart" tabindex="0" role="img" aria-label="Gráfico interactivo de la cartera. Usa las flechas izquierda y derecha para explorar los puntos."></canvas>
+            <div class="chart-empty" id="chart-empty"><span class="empty-cross">+</span><span>El gráfico aparecerá al iniciar tu sesión</span></div>
+            <span class="sr-only" id="chart-live" aria-live="polite" aria-atomic="true"></span>
+          </div>
+          <div class="chart-tooltip" id="chart-tooltip" role="tooltip" hidden>
+            <time id="chart-tooltip-time"></time>
+            <strong id="chart-tooltip-value"></strong>
+            <span id="chart-tooltip-change" class="chart-tooltip-change"></span>
+            <div><span>Efectivo</span><strong id="chart-tooltip-cash"></strong></div>
+            <div><span>Invertido</span><strong id="chart-tooltip-invested"></strong></div>
+          </div>
           <div class="chart-axis"><span id="chart-start-label">INICIO</span><span>VALOR EN EUR</span><span id="chart-end-label">AHORA</span></div>
         </section>
 
         <section class="panel session-panel" id="strategy" aria-labelledby="strategy-title">
           <div class="panel-header session-panel-header">
             <div>
-              <div class="section-kicker">CONFIGURACIÓN</div>
-              <h2 id="strategy-title">Tu experimento</h2>
+              <div class="section-kicker">SESIÓN SELECCIONADA</div>
+              <h2 id="strategy-title">Inspector de cartera</h2>
             </div>
-            <span class="config-mark" aria-hidden="true">PL<span>01</span></span>
+            <span class="config-mark" id="inspector-mark" aria-hidden="true">SIM</span>
           </div>
-          <form id="setup-form">
-            <label class="field-label" for="starting-balance">Saldo virtual inicial <span>EUR</span></label>
-            <div class="input-wrap balance-input"><span>€</span><input id="starting-balance" name="startingBalance" type="number" min="100" max="1000000" step="100" value="500" required><span class="input-suffix">EUR</span></div>
-
-            <fieldset class="asset-fieldset">
-              <legend class="field-label">Acciones <span>SELECCIONA 1-3</span></legend>
-              <div class="asset-options">
-                <label class="asset-option"><input type="checkbox" name="asset" value="AAPL" checked><span class="asset-check"></span><span class="asset-code">AAPL</span><span class="asset-name">Apple</span></label>
-                <label class="asset-option"><input type="checkbox" name="asset" value="MSFT" checked><span class="asset-check"></span><span class="asset-code">MSFT</span><span class="asset-name">Microsoft</span></label>
-                <label class="asset-option"><input type="checkbox" name="asset" value="NVDA" checked><span class="asset-check"></span><span class="asset-code">NVDA</span><span class="asset-name">NVIDIA</span></label>
-                <label class="asset-option"><input type="checkbox" name="asset" value="AMZN"><span class="asset-check"></span><span class="asset-code">AMZN</span><span class="asset-name">Amazon</span></label>
-                <label class="asset-option"><input type="checkbox" name="asset" value="TSLA"><span class="asset-check"></span><span class="asset-code">TSLA</span><span class="asset-name">Tesla</span></label>
-              </div>
-            </fieldset>
-
-            <div class="field-row">
-              <label class="field-label" for="fast-period">Media rápida <span>VELAS</span><input id="fast-period" name="fastPeriod" class="number-field" type="number" min="2" max="100" value="7" required></label>
-              <label class="field-label" for="slow-period">Media lenta <span>VELAS</span><input id="slow-period" name="slowPeriod" class="number-field" type="number" min="3" max="200" value="21" required></label>
-            </div>
-
-            <label class="field-label" for="timeframe">Intervalo de vela <span>ESTRATEGIA</span></label>
-            <select id="timeframe" name="timeframe">
-              <option value="1m">1 minuto</option>
-              <option value="5m" selected>5 minutos</option>
-              <option value="15m">15 minutos</option>
-              <option value="1h">1 hora</option>
-              <option value="1d">1 día</option>
-            </select>
-
-            <div class="field-row compact-row">
-              <label class="field-label" for="fee-rate">Comisión <span>POR OPERACIÓN</span><span class="input-inline"><input id="fee-rate" name="feeRate" type="number" min="0" max="2" step="0.01" value="0.1" required><b>%</b></span></label>
-              <label class="field-label" for="duration-days">Duración <span>OBJETIVO</span><select id="duration-days" name="durationDays"><option value="7">7 días</option><option value="14">14 días</option><option value="30" selected>30 días</option><option value="45">45 días</option></select></label>
-            </div>
-
-            <div class="allocation-control">
-              <label class="field-label" for="allocation-percent">Capital asignado <span>DEL SALDO TOTAL</span></label>
-              <span class="input-inline"><input id="allocation-percent" name="allocationPercent" type="number" min="10" max="100" step="5" value="80" required><b>%</b></span>
-            </div>
-
-            <div class="strategy-description"><span class="strategy-icon">MA</span><span>Cruce de medias móviles<br><small>Compra al cruce alcista, vende al bajista. Sin apalancamiento.</small></span></div>
-            <p class="form-error" id="form-error" role="alert"></p>
-            <button class="button button-primary start-button" id="start-button" type="submit">Iniciar experimento <span aria-hidden="true">→</span></button>
-          </form>
           <div class="runtime-controls" id="runtime-controls" hidden>
             <div class="runtime-summary"><span id="runtime-strategy">Cruce de medias</span><span id="runtime-assets">AAPL · MSFT</span></div>
             <div class="runtime-buttons">
@@ -195,16 +188,111 @@
 
       <section class="panel experiments-panel" aria-labelledby="experiments-title">
         <div class="panel-header lower-panel-header">
-          <div><div class="section-kicker">RESULTADOS</div><h2 id="experiments-title">Experimentos anteriores</h2></div>
+          <div><div class="section-kicker">COMPARATIVA</div><h2 id="experiments-title">Rentabilidad por experimento</h2></div>
           <span class="count-label" id="experiment-count">0 SESIONES</span>
         </div>
-        <div class="table-scroll"><table><thead><tr><th>INICIO</th><th>ACTIVOS</th><th>DURACIÓN</th><th>SALDO INICIAL</th><th>VALOR FINAL</th><th>RESULTADO</th><th>ESTADO</th></tr></thead><tbody id="experiments-body"></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>INICIO</th><th>ACTIVOS</th><th>DURACIÓN</th><th>SALDO INICIAL</th><th>VALOR FINAL</th><th>RENTABILIDAD</th><th>RESULTADO</th><th>ESTADO</th><th>VISTA</th></tr></thead><tbody id="experiments-body"></tbody></table></div>
         <div class="table-empty" id="experiments-empty">Al finalizar un experimento, su resultado quedará guardado aquí.</div>
       </section>
 
       <footer class="disclaimer"><span class="disclaimer-mark">!</span><p><strong>Solo simulación.</strong> No se envían órdenes reales. Yahoo Finance puede retrasar cotizaciones; el mercado también cierra en festivos y fines de semana. Un resultado positivo en un experimento no garantiza ganancias futuras ni justifica por sí solo pasar a dinero real.</p><span class="footer-signature">GASTRADELAB <span>·</span> 2026</span></footer>
     </main>
   </div>
+  <dialog class="experiment-dialog" id="experiment-dialog" aria-labelledby="setup-dialog-title">
+    <div class="experiment-dialog-header">
+      <div>
+        <div class="section-kicker">CONFIGURACIÓN</div>
+        <h2 id="setup-dialog-title">Nuevo experimento</h2>
+      </div>
+      <button class="icon-button" id="close-experiment-button" type="button" title="Cerrar" aria-label="Cerrar configuración">×</button>
+    </div>
+    <form id="setup-form">
+      <label class="field-label" for="starting-balance">Saldo virtual inicial <span>EUR</span></label>
+      <div class="input-wrap balance-input"><span>€</span><input id="starting-balance" name="startingBalance" type="number" min="100" max="1000000" step="100" value="500" required><span class="input-suffix">EUR</span></div>
+
+      <fieldset class="asset-fieldset">
+        <legend class="field-label">Acciones <span>SELECCIONA 1-3</span></legend>
+        <div class="asset-options">
+          <label class="asset-option"><input type="checkbox" name="asset" value="AAPL" checked><span class="asset-check"></span><span class="asset-code">AAPL</span><span class="asset-name">Apple</span></label>
+          <label class="asset-option"><input type="checkbox" name="asset" value="MSFT" checked><span class="asset-check"></span><span class="asset-code">MSFT</span><span class="asset-name">Microsoft</span></label>
+          <label class="asset-option"><input type="checkbox" name="asset" value="NVDA" checked><span class="asset-check"></span><span class="asset-code">NVDA</span><span class="asset-name">NVIDIA</span></label>
+          <label class="asset-option"><input type="checkbox" name="asset" value="AMZN"><span class="asset-check"></span><span class="asset-code">AMZN</span><span class="asset-name">Amazon</span></label>
+          <label class="asset-option"><input type="checkbox" name="asset" value="TSLA"><span class="asset-check"></span><span class="asset-code">TSLA</span><span class="asset-name">Tesla</span></label>
+        </div>
+      </fieldset>
+
+      <label class="field-label" for="strategy-mode">Algoritmo <span>ESTRATEGIA</span></label>
+      <select id="strategy-mode" name="strategy">
+        <option value="moving_average_grid" selected>Cruce de medias + grid</option>
+        <option value="momentum_target">Impulso + objetivo de beneficio</option>
+      </select>
+
+      <div class="field-row strategy-only" data-strategy="moving_average_grid">
+        <label class="field-label" for="fast-period">Media rápida <span>VELAS</span><input id="fast-period" name="fastPeriod" class="number-field" type="number" min="2" max="100" value="7" required></label>
+        <label class="field-label" for="slow-period">Media lenta <span>VELAS</span><input id="slow-period" name="slowPeriod" class="number-field" type="number" min="3" max="200" value="21" required></label>
+      </div>
+
+      <div class="field-row strategy-only" data-strategy="momentum_target">
+        <label class="field-label" for="entry-trigger-type">Disparador de compra <span>ENTRADA</span>
+          <select id="entry-trigger-type" name="entryTriggerType" class="number-field">
+            <option value="percent" selected>Subida porcentual</option>
+            <option value="price">Precio objetivo (EUR)</option>
+          </select>
+        </label>
+        <label class="field-label" for="entry-change-percent" data-entry-trigger="percent">Subida mínima <span>EN LA VENTANA</span><input id="entry-change-percent" name="entryChangePercent" class="number-field" type="number" min="0.1" max="50" step="0.1" value="1"></label>
+        <label class="field-label" for="entry-lookback-candles" data-entry-trigger="percent">Ventana <span>VELAS</span><input id="entry-lookback-candles" name="entryLookbackCandles" class="number-field" type="number" min="1" max="500" value="3"></label>
+        <label class="field-label" for="entry-price-eur" data-entry-trigger="price" hidden>Precio de entrada <span>EUR</span><input id="entry-price-eur" name="entryPriceEur" class="number-field" type="number" min="0.01" step="0.01"></label>
+      </div>
+
+      <div class="allocation-control strategy-only" data-strategy="momentum_target">
+        <label class="field-label" for="profit-target-percent">Beneficio neto objetivo <span>DESDE COSTE MEDIO</span></label>
+        <span class="input-inline"><input id="profit-target-percent" name="profitTargetPercent" type="number" min="0.1" max="100" step="0.1" value="2"><b>%</b></span>
+        <p class="protective-note">Solo vende al cubrir coste medio, comisiones y este objetivo. No usa stop-loss.</p>
+      </div>
+
+      <label class="field-label" for="timeframe">Intervalo de vela <span>ESTRATEGIA</span></label>
+      <select id="timeframe" name="timeframe">
+        <option value="1m">1 minuto</option>
+        <option value="5m" selected>5 minutos</option>
+        <option value="15m">15 minutos</option>
+        <option value="1h">1 hora</option>
+        <option value="1d">1 día</option>
+      </select>
+
+      <div class="field-row compact-row">
+        <label class="field-label" for="fee-rate">Comisión <span>POR OPERACIÓN</span><span class="input-inline"><input id="fee-rate" name="feeRate" type="number" min="0" max="2" step="0.01" value="0.1" required><b>%</b></span></label>
+        <label class="field-label" for="duration-days">Duración <span>OBJETIVO</span><select id="duration-days" name="durationDays"><option value="7">7 días</option><option value="14">14 días</option><option value="30" selected>30 días</option><option value="45">45 días</option></select></label>
+      </div>
+
+      <div class="field-row grid-parameters strategy-only" data-strategy="moving_average_grid">
+        <label class="field-label" for="grid-step-percent">Comprar al caer <span>DESDE ÚLTIMO FILL</span><input id="grid-step-percent" name="gridStepPercent" class="number-field" type="number" min="0.5" max="10" step="0.5" value="2" required></label>
+        <label class="field-label" for="take-profit-percent">Vender al subir <span>DESDE ÚLTIMO FILL</span><input id="take-profit-percent" name="takeProfitPercent" class="number-field" type="number" min="0.5" max="20" step="0.5" value="2" required></label>
+      </div>
+
+      <div class="allocation-control strategy-only" data-strategy="moving_average_grid">
+        <label class="field-label" for="grid-tranches">Tramos por activo <span>DIVISIÓN DEL PRESUPUESTO</span></label>
+        <span class="input-inline"><input id="grid-tranches" name="gridTranches" type="number" min="2" max="10" step="1" value="4" required><b>tramos</b></span>
+      </div>
+
+      <div class="allocation-control">
+        <label class="field-label" for="allocation-percent">Capital asignado <span>DEL SALDO TOTAL</span></label>
+        <span class="input-inline"><input id="allocation-percent" name="allocationPercent" type="number" min="10" max="100" step="5" value="80" required><b>%</b></span>
+      </div>
+
+      <div class="allocation-control strategy-only" data-strategy="moving_average_grid">
+        <label class="field-label" for="stop-loss-percent">Stop de protección <span>DESDE PRECIO MEDIO</span></label>
+        <span class="input-inline"><input id="stop-loss-percent" name="stopLossPercent" type="number" min="1" max="25" step="0.5" value="5" required><b>%</b></span>
+        <p class="protective-note">Activa la venta al tocar el límite. Un salto de precio puede ampliar la pérdida.</p>
+      </div>
+
+      <div class="strategy-description"><span class="strategy-icon">GRID</span><span>Grid escalonado<br><small>Entrada por cruce; añade al caer y vende por partes al subir.</small></span></div>
+      <p class="form-error" id="form-error" role="alert"></p>
+      <div class="form-actions">
+        <button class="button button-secondary" id="cancel-experiment-button" type="button">Cancelar</button>
+        <button class="button button-primary start-button" id="start-button" type="submit">Crear experimento <span aria-hidden="true">→</span></button>
+      </div>
+    </form>
+  </dialog>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

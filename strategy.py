@@ -27,6 +27,24 @@ def crossover_signal(closes: list[float], fast_period: int, slow_period: int) ->
     return "hold"
 
 
+def threshold_entry_signal(
+    closes: list[float],
+    trigger_type: str,
+    trigger_value: float,
+    lookback_period: int,
+) -> bool:
+    if trigger_value <= 0 or lookback_period < 1:
+        return False
+    if trigger_type == "price":
+        return len(closes) >= 2 and closes[-2] < trigger_value <= closes[-1]
+    if trigger_type != "percent" or len(closes) < lookback_period + 2:
+        return False
+
+    previous_change = (closes[-2] / closes[-2 - lookback_period] - 1) * 100
+    current_change = (closes[-1] / closes[-1 - lookback_period] - 1) * 100
+    return previous_change < trigger_value <= current_change
+
+
 def portfolio_value(portfolio: dict[str, Any], prices: dict[str, float]) -> float:
     holdings_value = sum(
         position["quantity"] * prices.get(symbol, 0.0)

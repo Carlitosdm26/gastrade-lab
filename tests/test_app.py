@@ -29,6 +29,10 @@ def test_api_creates_schema_and_controls_experiment(monkeypatch):
         experiment = started.json()["experiment"]
         assert experiment["status"] == "running"
         assert experiment["total_value"] == 10_000
+        assert experiment["config"]["stop_loss_percent"] == 5
+        assert experiment["config"]["grid_step_percent"] == 2
+        assert experiment["config"]["take_profit_percent"] == 2
+        assert experiment["config"]["grid_tranches"] == 4
         experiment_id = experiment["id"]
 
         paused = client.post(f"/api/sessions/{experiment_id}/pause")
@@ -43,7 +47,63 @@ def test_api_creates_schema_and_controls_experiment(monkeypatch):
         assert history["total_value"] == 10_000
 
 
-def test_api_rejects_fast_period_not_less_than_slow():
+def test_api_allows_multiple_independent_active_experiments(monkeypatch):
+    monkeypatch.setattr(app_module, "start_worker", lambda: None)
+    monkeypatch.setattr(app_module, "stop_worker", lambda: None)
+    payload = {
+        "starting_balance": 1_000,
+        "symbols": ["AAPL"],
+        "fast_period": 7,
+        "slow_period": 21,
+        "interval": "5m",
+        "fee_rate": 0.001,
+        "allocation_percent": 80,
+        "duration_days": 7,
+    }
+
+    with TestClient(app_module.app) as client:
+        first = client.post("/api/sessions", json=payload)
+        second = client.post("/api/sessions", json={**payload, "starting_balance": 2_000})
+
+        assert first.status_code == 200
+        assert second.status_code == 200
+        assert len(second.json()["experiments"]) == 2
+        first_id = first.json()["experiment"]["id"]
+        second_id = second.json()["experiment"]["id"]
+        sessions = {session["id"]: session for session in client.get("/api/sessions").json()}
+        assert sessions[first_id]["status"] == "running"
+        assert sessions[second_id]["status"] == "running"
+
+        paused = client.post(f"/api/sessions/{first_id}/pause")
+        sessions = {session["id"]: session for session in client.get("/api/sessions").json()}
+        assert paused.status_code == 200
+        assert sessions[first_id]["status"] == "paused"
+        assert sessions[second_id]["status"] == "running"
+
+        resumed = client.post(f"/api/sessions/{first_id}/resume")
+        stopped = client.post(f"/api/sessions/{second_id}/stop")
+        assert resumed.status_code == 200
+        assert stopped.status_code == 200
+        sessions = {session["id"]: session for session in client.get("/api/sessions").json()}
+        assert sessions[first_id]["status"] == "running"
+        assert sessions[second_id]["status"] == "stopped"
+
+        additional_ids = []
+        for index in range(app_module.MAX_ACTIVE_EXPERIMENTS - 1):
+            additional = client.post("/api/sessions", json={**payload, "starting_balance": 1_000 + index * 100})
+            assert additional.status_code == 200
+            additional_ids.append(additional.json()["experiment"]["id"])
+        overflow = client.post("/api/sessions", json=payload)
+        assert overflow.status_code == 409
+        assert "límite" in overflow.json()["detail"]
+        for experiment_id in [first_id, *additional_ids]:
+            stopped = client.post(f"/api/sessions/{experiment_id}/stop")
+            assert stopped.status_code == 200
+
+
+def test_api_rejects_fast_period_not_less_than_slow(monkeypatch):
+    monkeypatch.setattr(app_module, "start_worker", lambda: None)
+    monkeypatch.setattr(app_module, "stop_worker", lambda: None)
     with TestClient(app_module.app) as client:
         response = client.post("/api/sessions", json={
             "starting_balance": 1_000,
@@ -58,7 +118,49 @@ def test_api_rejects_fast_period_not_less_than_slow():
     assert response.status_code == 422
 
 
-def test_api_includes_recent_quote_history():
+def test_api_accepts_momentum_target_strategy(monkeypatch):
+    monkeypatch.setattr(app_module, "start_worker", lambda: None)
+    monkeypatch.setattr(app_module, "stop_worker", lambda: None)
+    payload = {
+        "starting_balance": 1_000,
+        "symbols": ["AAPL"],
+        "strategy": "momentum_target",
+        "entry_trigger_type": "price",
+        "entry_price_eur": 200,
+        "interval": "5m",
+        "fee_rate": 0.001,
+        "allocation_percent": 80,
+        "profit_target_percent": 3,
+        "duration_days": 7,
+    }
+
+    with TestClient(app_module.app) as client:
+        response = client.post("/api/sessions", json=payload)
+        assert response.status_code == 200
+        assert response.json()["experiment"]["config"]["strategy"] == "momentum_target"
+        assert response.json()["experiment"]["config"]["profit_target_percent"] == 3
+
+
+def test_api_requires_price_for_price_entry_trigger(monkeypatch):
+    monkeypatch.setattr(app_module, "start_worker", lambda: None)
+    monkeypatch.setattr(app_module, "stop_worker", lambda: None)
+    with TestClient(app_module.app) as client:
+        response = client.post("/api/sessions", json={
+            "starting_balance": 1_000,
+            "symbols": ["AAPL"],
+            "strategy": "momentum_target",
+            "entry_trigger_type": "price",
+            "interval": "5m",
+            "fee_rate": 0.001,
+            "allocation_percent": 80,
+            "duration_days": 7,
+        })
+    assert response.status_code == 422
+
+
+def test_api_includes_recent_quote_history(monkeypatch):
+    monkeypatch.setattr(app_module, "start_worker", lambda: None)
+    monkeypatch.setattr(app_module, "stop_worker", lambda: None)
     with TestClient(app_module.app) as client:
         with SessionLocal() as db:
             db.add(Quote(

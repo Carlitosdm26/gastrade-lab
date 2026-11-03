@@ -5,6 +5,7 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -26,22 +27,35 @@ from worker import ASSETS, INTERVAL_SECONDS, start_worker, stop_worker
 
 BASE_DIR = Path(__file__).resolve().parent
 VALID_INTERVALS = set(INTERVAL_SECONDS)
+MAX_ACTIVE_EXPERIMENTS = 5
 
 
 class SessionConfig(BaseModel):
     starting_balance: float = Field(ge=100, le=1_000_000)
     symbols: list[str] = Field(min_length=1, max_length=3)
-    fast_period: int = Field(ge=2, le=100)
-    slow_period: int = Field(ge=3, le=200)
+    strategy: Literal["moving_average_grid", "momentum_target"] = "moving_average_grid"
+    fast_period: int = Field(default=7, ge=2, le=100)
+    slow_period: int = Field(default=21, ge=3, le=200)
     interval: str
     fee_rate: float = Field(ge=0, le=0.02)
     allocation_percent: float = Field(ge=10, le=100)
+    stop_loss_percent: float = Field(default=5, ge=1, le=25)
+    grid_step_percent: float = Field(default=2, ge=0.5, le=10)
+    take_profit_percent: float = Field(default=2, ge=0.5, le=20)
+    grid_tranches: int = Field(default=4, ge=2, le=10)
+    entry_trigger_type: Literal["percent", "price"] = "percent"
+    entry_change_percent: float = Field(default=1, gt=0, le=50)
+    entry_lookback_candles: int = Field(default=3, ge=1, le=500)
+    entry_price_eur: float | None = Field(default=None, gt=0)
+    profit_target_percent: float = Field(default=2, gt=0, le=100)
     duration_days: int = Field(ge=1, le=45, default=30)
 
     @model_validator(mode="after")
     def validate_strategy(self):
-        if self.slow_period <= self.fast_period:
+        if self.strategy == "moving_average_grid" and self.slow_period <= self.fast_period:
             raise ValueError("La media lenta debe ser mayor que la rápida.")
+        if self.strategy == "momentum_target" and self.entry_trigger_type == "price" and self.entry_price_eur is None:
+            raise ValueError("Indica el precio objetivo de entrada en EUR.")
         if self.interval not in VALID_INTERVALS:
             raise ValueError("El intervalo de vela no es válido.")
         if len(set(self.symbols)) != len(self.symbols):
@@ -147,6 +161,11 @@ def _experiment_summary(db, experiment: Experiment, include_history: bool = True
 
 def _build_state(db) -> dict:
     experiment = db.scalar(select(Experiment).order_by(Experiment.created_at.desc()))
+    active_experiments = db.scalars(
+        select(Experiment)
+        .where(Experiment.status.in_(["running", "paused"]))
+        .order_by(Experiment.created_at.desc())
+    ).all()
     quotes = db.scalars(select(Quote).order_by(Quote.symbol)).all()
     market_status = db.get(MarketStatus, "primary")
     quote_history = {
@@ -189,6 +208,8 @@ def _build_state(db) -> dict:
             for quote in quotes
         ],
         "experiment": _experiment_summary(db, experiment) if experiment else None,
+        "experiments": [_experiment_summary(db, item) for item in active_experiments],
+        "max_active_experiments": MAX_ACTIVE_EXPERIMENTS,
     }
 
 
@@ -254,9 +275,13 @@ def get_session(experiment_id: str):
 @app.post("/api/sessions")
 def start_session(config: SessionConfig):
     with SessionLocal() as db:
-        active = db.scalar(select(Experiment).where(Experiment.status.in_(["running", "paused"])))
-        if active:
-            raise HTTPException(status_code=409, detail="Ya existe una simulación activa.")
+        active = db.scalars(
+            select(Experiment.id)
+            .where(Experiment.status.in_(["running", "paused"]))
+            .limit(MAX_ACTIVE_EXPERIMENTS)
+        ).all()
+        if len(active) >= MAX_ACTIVE_EXPERIMENTS:
+            raise HTTPException(status_code=409, detail=f"El límite es de {MAX_ACTIVE_EXPERIMENTS} experimentos activos.")
         now = time.time()
         experiment = Experiment(
             id=str(uuid.uuid4()),
