@@ -5,14 +5,14 @@ import os
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 
 
 SOURCE_NAME = "Yahoo Finance chart API"
 USER_AGENT = os.getenv(
     "MARKET_DATA_USER_AGENT",
-    "Mozilla/5.0 (compatible; PapertradeLab/1.0; +https://github.com)",
+    "Mozilla/5.0 (compatible; GastradeLab/1.0; +https://github.com)",
 )
 
 
@@ -22,7 +22,8 @@ class MarketDataError(RuntimeError):
 
 def fetch_chart(symbol: str, interval: str, period: str = "1mo") -> dict[str, Any]:
     safe_symbol = quote(symbol, safe="")
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{safe_symbol}?interval={interval}&range={period}"
+    query = urlencode({"interval": interval, "range": period, "includePrePost": "true"})
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{safe_symbol}?{query}"
     request = Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json"})
     try:
         with urlopen(request, timeout=15) as response:
@@ -62,9 +63,14 @@ def fetch_chart(symbol: str, interval: str, period: str = "1mo") -> dict[str, An
             "volume": float(volumes[index] if index < len(volumes) and volumes[index] is not None else 0),
         })
 
+    latest_candle = candles[-1] if candles else None
     market_price = meta.get("regularMarketPrice")
-    if market_price is None and candles:
-        market_price = candles[-1]["close"]
+    market_time = float(meta.get("regularMarketTime") or 0)
+    if latest_candle and (not market_time or latest_candle["timestamp"] > market_time):
+        market_price = latest_candle["close"]
+        market_time = latest_candle["timestamp"]
+    if market_price is None and latest_candle:
+        market_price = latest_candle["close"]
     if market_price is None or float(market_price) <= 0:
         raise MarketDataError(f"Yahoo Finance no devolvió un precio válido para {symbol}.")
 
@@ -73,7 +79,7 @@ def fetch_chart(symbol: str, interval: str, period: str = "1mo") -> dict[str, An
         "currency": meta.get("currency", "USD"),
         "exchange": meta.get("exchangeName", ""),
         "market_state": meta.get("marketState", "UNKNOWN"),
-        "market_time": float(meta.get("regularMarketTime") or (candles[-1]["timestamp"] if candles else time.time())),
+        "market_time": market_time or (latest_candle["timestamp"] if latest_candle else time.time()),
         "price_native": float(market_price),
         "candles": candles,
     }

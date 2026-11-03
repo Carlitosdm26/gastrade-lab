@@ -3,21 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#101a17">
+  <meta name="theme-color" content="#07100b">
   <meta name="description" content="Laboratorio de paper trading para probar estrategias con saldo virtual y precios de mercado.">
-  <title>Papertrade Lab | Simulador</title>
+  <title>GastradeLab | Simulador</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css">
-  <script src="appClient.js" defer></script>
+  <link rel="stylesheet" href="styles.css?v=2">
+  <script src="appClient.js?v=2" defer></script>
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" aria-label="Navegación principal">
-      <a class="brand" href="#overview" aria-label="Papertrade Lab, inicio">
+      <a class="brand" href="#overview" aria-label="GastradeLab, inicio">
         <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
-        <span class="brand-name">papertrade<span>lab</span></span>
+        <span class="brand-name">gastrade<span>lab</span></span>
       </a>
       <div class="workspace-label">WORKSPACE</div>
       <nav class="main-nav">
@@ -48,8 +48,8 @@
       <section class="page-heading" id="overview">
         <div>
           <div class="eyebrow"><span class="eyebrow-line"></span> SIMULACIÓN AUTOMÁTICA / EUR</div>
-          <h1>Un mes de prueba.<br class="mobile-break"> Sin dinero real<span class="heading-period">.</span></h1>
-          <p class="heading-copy">El bot sigue trabajando en el servidor aunque cierres esta página.</p>
+          <h1>Prueba tu estrategia.<br class="mobile-break"> Sin dinero real<span class="heading-period">.</span></h1>
+          <p class="heading-copy">Configura el experimento y sigue su evolución desde aquí.</p>
         </div>
         <div class="session-meta">
           <span class="session-label">ESTADO DE SESIÓN</span>
@@ -121,7 +121,7 @@
           </div>
           <form id="setup-form">
             <label class="field-label" for="starting-balance">Saldo virtual inicial <span>EUR</span></label>
-            <div class="input-wrap balance-input"><span>€</span><input id="starting-balance" name="startingBalance" type="number" min="100" max="1000000" step="100" value="10000" required><span class="input-suffix">EUR</span></div>
+            <div class="input-wrap balance-input"><span>€</span><input id="starting-balance" name="startingBalance" type="number" min="100" max="1000000" step="100" value="500" required><span class="input-suffix">EUR</span></div>
 
             <fieldset class="asset-fieldset">
               <legend class="field-label">Acciones <span>SELECCIONA 1-3</span></legend>
@@ -169,7 +169,7 @@
               <button class="button button-primary" id="resume-button" type="button" hidden>Reanudar</button>
               <button class="button button-stop" id="stop-button" type="button">Finalizar</button>
             </div>
-            <p class="runtime-hint" id="runtime-hint">El worker del servidor sigue activo si cierras esta página. El equipo y el contenedor deben permanecer encendidos.</p>
+            <p class="runtime-hint" id="runtime-hint">Puedes cerrar esta página; la simulación continúa mientras el servidor siga encendido.</p>
           </div>
         </section>
       </div>
@@ -202,7 +202,7 @@
         <div class="table-empty" id="experiments-empty">Al finalizar un experimento, su resultado quedará guardado aquí.</div>
       </section>
 
-      <footer class="disclaimer"><span class="disclaimer-mark">!</span><p><strong>Solo simulación.</strong> No se envían órdenes reales. Yahoo Finance puede retrasar cotizaciones y el mercado cierra en festivos y fines de semana. Un resultado positivo de 30 días no garantiza ganancias futuras ni justifica por sí solo pasar a dinero real.</p><span class="footer-signature">PAPERTRADE LAB <span>·</span> 2026</span></footer>
+      <footer class="disclaimer"><span class="disclaimer-mark">!</span><p><strong>Solo simulación.</strong> No se envían órdenes reales. Yahoo Finance puede retrasar cotizaciones; el mercado también cierra en festivos y fines de semana. Un resultado positivo en un experimento no garantiza ganancias futuras ni justifica por sí solo pasar a dinero real.</p><span class="footer-signature">GASTRADELAB <span>·</span> 2026</span></footer>
     </main>
   </div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>

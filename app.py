@@ -58,7 +58,7 @@ async def lifespan(_app: FastAPI):
     stop_worker()
 
 
-app = FastAPI(title="Papertrade Lab", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="GastradeLab", version="1.0.0", lifespan=lifespan)
 
 
 def _elapsed_seconds(experiment: Experiment, now: float) -> float:
