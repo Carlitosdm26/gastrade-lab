@@ -9,6 +9,7 @@ GastradeLab es un simulador de trading automático de acciones. Su interfaz web 
 1. Configura el saldo virtual, entre una y tres acciones, comisión, porcentaje de capital, intervalo de velas y duración.
 2. Pulsa **Iniciar experimento**. La duración predeterminada es 30 días; se puede elegir entre 7, 14, 30 y 45 días.
 3. Un worker consulta las cotizaciones en segundo plano, guarda las velas completas y ejecuta la estrategia únicamente cuando aparece una vela nueva y cerrada.
+	El dashboard conserva hasta 120 consultas recientes por acción para comparar cómo cambia el precio.
 4. Por defecto utiliza un cruce de medias móviles (7 y 21 periodos), saldo inicial de 500 EUR, acciones AAPL/MSFT/NVDA, velas de 5 minutos, comisión del 0,1 % y un máximo de capital asignado del 80 %. Todos esos valores se configuran antes de iniciar.
 5. Desde el panel puedes pausar, reanudar o finalizar. Al alcanzar la duración se cierra la sesión automáticamente y su resultado permanece en el historial.
 
@@ -70,7 +71,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-La suite verifica señales y comisiones, el control de experimentos, la creación del esquema y que el worker solo opere después de una vela nueva cerrada.
+La suite verifica señales y comisiones, el control de experimentos, la creación del esquema, el historial de cotizaciones y que el worker solo opere después de una vela nueva cerrada.
 
 ## Estructura
 

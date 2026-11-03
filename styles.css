@@ -410,3 +410,27 @@ td:first-child { color: #d5e6d8; }
 .toast { border-color: #39744c; border-radius: 3px; color: #e0eee4; background: #10271a; box-shadow: 0 9px 30px #0008; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline-color: var(--mint); }
 @keyframes pulse { 50% { box-shadow: 0 0 0 5px #1a472c; } }
+
+.market-panel { position: relative; z-index: 3; overflow: visible; }
+.market-item { position: relative; }
+.market-price-trigger { display: flex; width: 100%; align-items: center; gap: 7px; margin-top: 7px; padding: 0; border: 0; color: inherit; background: transparent; cursor: pointer; text-align: left; }
+.market-price-trigger:focus-visible { outline: 2px solid var(--mint); outline-offset: 3px; }
+.market-price-trigger .market-price { margin-top: 0; }
+.market-history-hint { color: var(--mint); font: 7px var(--mono); opacity: 0; transition: opacity .15s ease; }
+.market-price-trigger:hover .market-history-hint, .market-price-trigger:focus-visible .market-history-hint { opacity: 1; }
+.quote-history { position: absolute; top: calc(100% + 10px); left: 0; z-index: 10; display: none; width: min(270px, calc(100vw - 32px)); padding: 10px; border: 1px solid #34704a; border-radius: 4px; color: #d3e6d7; background: #0a160e; box-shadow: 0 12px 30px #000b; }
+.market-item:nth-child(n+4) .quote-history { right: 0; left: auto; }
+.market-item:hover .quote-history, .market-item:focus-within .quote-history, .market-item.history-open .quote-history { display: block; }
+.quote-history-header { padding-bottom: 7px; border-bottom: 1px solid #203b2c; color: var(--lime); font: 8px var(--mono); text-transform: uppercase; }
+.quote-history-list { display: grid; max-height: 220px; gap: 1px; overflow: auto; padding-top: 4px; }
+.quote-history-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 2px; border-bottom: 1px solid #17291c; color: #91aa98; font: 9px var(--mono); }
+.quote-history-row span { color: #e0eee4; }
+.quote-history-empty { padding: 8px 2px 3px; color: #91aa98; font-size: 9px; }
+@media (max-width: 680px) {
+  .market-history-hint { opacity: 1; }
+  .market-item.history-open { grid-column: 1 / -1; padding: 0 0 12px; border-left: 0; }
+  .market-item.history-open .quote-history { position: static; width: 100%; margin-top: 9px; }
+}
+@media (hover: none) {
+  .market-item:hover:not(.history-open) .quote-history { display: none; }
+}

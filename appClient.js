@@ -10,6 +10,7 @@
   const percent = new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   let appState = null;
   let sessions = [];
+  let openQuoteHistorySymbol = null;
   let loadedAt = Date.now();
   let chartRange = "24h";
   let toastTimer;
@@ -61,9 +62,59 @@
       const name = document.createElement("div");
       name.className = "market-name";
       name.textContent = quote.name;
+      item.dataset.symbol = quote.symbol;
+      item.classList.toggle("history-open", openQuoteHistorySymbol === quote.symbol);
+      const priceButton = document.createElement("button");
+      priceButton.type = "button";
+      priceButton.className = "market-price-trigger";
+      priceButton.setAttribute("aria-label", `Ver últimas consultas de ${quote.symbol}`);
+      priceButton.setAttribute("aria-controls", `quote-history-${quote.symbol}`);
+      priceButton.setAttribute("aria-expanded", String(openQuoteHistorySymbol === quote.symbol));
+      priceButton.title = `Ver historial reciente de ${quote.symbol}`;
       const price = document.createElement("div");
       price.className = "market-price";
       price.textContent = euro(quote.price);
+      const historyHint = document.createElement("span");
+      historyHint.className = "market-history-hint";
+      historyHint.textContent = "HISTORIAL";
+      priceButton.append(price, historyHint);
+      priceButton.addEventListener("click", () => {
+        openQuoteHistorySymbol = openQuoteHistorySymbol === quote.symbol ? null : quote.symbol;
+        marketList.querySelectorAll(".market-item").forEach((marketItem) => {
+          const expanded = marketItem.dataset.symbol === openQuoteHistorySymbol;
+          marketItem.classList.toggle("history-open", expanded);
+          marketItem.querySelector(".market-price-trigger")?.setAttribute("aria-expanded", String(expanded));
+        });
+      });
+      const historyPanel = document.createElement("div");
+      historyPanel.className = "quote-history";
+      historyPanel.id = `quote-history-${quote.symbol}`;
+      historyPanel.setAttribute("role", "region");
+      historyPanel.setAttribute("aria-label", `Historial de consultas de ${quote.symbol}`);
+      const historyHeader = document.createElement("div");
+      historyHeader.className = "quote-history-header";
+      historyHeader.textContent = "Últimas consultas";
+      historyPanel.append(historyHeader);
+      const historyList = document.createElement("div");
+      historyList.className = "quote-history-list";
+      for (const point of quote.history || []) {
+        const row = document.createElement("div");
+        row.className = "quote-history-row";
+        const timestamp = document.createElement("time");
+        timestamp.dateTime = new Date(Number(point.fetched_at) * 1000).toISOString();
+        timestamp.textContent = time(point.fetched_at, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const historyPrice = document.createElement("span");
+        historyPrice.textContent = euro(point.price);
+        row.append(timestamp, historyPrice);
+        historyList.append(row);
+      }
+      if (!historyList.childElementCount) {
+        const emptyHistory = document.createElement("div");
+        emptyHistory.className = "quote-history-empty";
+        emptyHistory.textContent = "Aún no hay consultas guardadas.";
+        historyList.append(emptyHistory);
+      }
+      historyPanel.append(historyList);
       const state = document.createElement("div");
       const quoteTime = quote.market_time || quote.fetched_at;
       const quoteAge = Math.max(0, Date.now() / 1000 - quoteTime);
@@ -72,7 +123,7 @@
       state.className = `market-state ${quote.error ? "error" : fresh && stateKnown && quote.market_state === "REGULAR" ? "open" : "closed"}`;
       const freshnessLabel = quoteAge < 60 ? "Ahora mismo" : `hace ${formatAge(quoteTime)}`;
       state.textContent = quote.error ? "Sin cotización" : `${marketStateLabel(quote.market_state)} · ${freshnessLabel}`;
-      item.append(symbol, name, price, state);
+      item.append(symbol, name, priceButton, state, historyPanel);
       marketList.append(item);
     }
 
@@ -392,6 +443,24 @@
 
   function init() {
     elements.setupForm.addEventListener("submit", startExperiment);
+    document.addEventListener("click", (event) => {
+      if (openQuoteHistorySymbol && !event.target.closest(".market-item")) {
+        openQuoteHistorySymbol = null;
+        document.querySelectorAll(".market-item.history-open").forEach((item) => {
+          item.classList.remove("history-open");
+          item.querySelector(".market-price-trigger")?.setAttribute("aria-expanded", "false");
+        });
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && openQuoteHistorySymbol) {
+        openQuoteHistorySymbol = null;
+        document.querySelectorAll(".market-item.history-open").forEach((item) => {
+          item.classList.remove("history-open");
+          item.querySelector(".market-price-trigger")?.setAttribute("aria-expanded", "false");
+        });
+      }
+    });
     elements.primaryRunButton.addEventListener("click", () => {
       if (appState?.experiment?.status === "paused") changeStatus("resume");
       else if (["running", "paused"].includes(appState?.experiment?.status)) document.getElementById("strategy").scrollIntoView({ behavior: "smooth" });

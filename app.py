@@ -17,6 +17,7 @@ from database import (
     MarketStatus,
     Position,
     Quote,
+    QuoteHistory,
     SessionLocal,
     Trade,
     init_db,
@@ -148,6 +149,15 @@ def _build_state(db) -> dict:
     experiment = db.scalar(select(Experiment).order_by(Experiment.created_at.desc()))
     quotes = db.scalars(select(Quote).order_by(Quote.symbol)).all()
     market_status = db.get(MarketStatus, "primary")
+    quote_history = {
+        quote.symbol: db.scalars(
+            select(QuoteHistory)
+            .where(QuoteHistory.symbol == quote.symbol)
+            .order_by(QuoteHistory.fetched_at.desc(), QuoteHistory.id.desc())
+            .limit(12)
+        ).all()
+        for quote in quotes
+    }
     return {
         "source": "Yahoo Finance chart API",
         "market": {
@@ -167,6 +177,14 @@ def _build_state(db) -> dict:
                 "fetched_at": quote.fetched_at,
                 "source": quote.source,
                 "error": quote.error,
+                "history": [
+                    {
+                        "price": item.price_eur,
+                        "market_time": item.market_time,
+                        "fetched_at": item.fetched_at,
+                    }
+                    for item in quote_history[quote.symbol]
+                ],
             }
             for quote in quotes
         ],

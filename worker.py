@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from database import (
     Candle,
@@ -14,6 +14,7 @@ from database import (
     MarketStatus,
     Position,
     Quote,
+    QuoteHistory,
     SessionLocal,
     SignalCursor,
     Trade,
@@ -30,6 +31,7 @@ ASSETS = {
 }
 INTERVAL_SECONDS = {"1m": 60, "2m": 120, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d": 86400}
 POLL_SECONDS = max(30, int(os.getenv("MARKET_POLL_SECONDS", "60")))
+QUOTE_HISTORY_LIMIT = 120
 
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
@@ -129,6 +131,12 @@ def _poll_market() -> None:
             quote.fetched_at = now
             quote.source = SOURCE_NAME
             quote.error = None
+            db.add(QuoteHistory(
+                symbol=symbol,
+                price_eur=price_eur,
+                market_time=snapshot["market_time"],
+                fetched_at=now,
+            ))
 
             if experiment and symbol in active_symbols and active_interval == interval:
                 existing_timestamps = set(db.scalars(
@@ -153,6 +161,20 @@ def _poll_market() -> None:
                         source=SOURCE_NAME,
                     ))
         db.flush()
+
+        for symbol in snapshots:
+            recent_ids = db.scalars(
+                select(QuoteHistory.id)
+                .where(QuoteHistory.symbol == symbol)
+                .order_by(QuoteHistory.fetched_at.desc(), QuoteHistory.id.desc())
+                .limit(QUOTE_HISTORY_LIMIT)
+            ).all()
+            db.execute(
+                delete(QuoteHistory).where(
+                    QuoteHistory.symbol == symbol,
+                    QuoteHistory.id.not_in(recent_ids),
+                )
+            )
 
         market_status = db.get(MarketStatus, "primary")
         if market_status is None:

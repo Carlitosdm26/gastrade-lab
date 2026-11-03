@@ -2,7 +2,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import inspect
 
 import app as app_module
-from database import engine
+from database import Quote, QuoteHistory, SessionLocal, engine
 
 
 def test_api_creates_schema_and_controls_experiment(monkeypatch):
@@ -21,7 +21,7 @@ def test_api_creates_schema_and_controls_experiment(monkeypatch):
 
     with TestClient(app_module.app) as client:
         names = set(inspect(engine).get_table_names())
-        assert {"experiments", "candles", "quotes", "positions", "trades", "equity_snapshots"} <= names
+        assert {"experiments", "candles", "quotes", "quote_history", "positions", "trades", "equity_snapshots"} <= names
         assert client.get("/api/health").json() == {"status": "ok", "database": "connected"}
 
         started = client.post("/api/sessions", json=payload)
@@ -56,3 +56,35 @@ def test_api_rejects_fast_period_not_less_than_slow():
             "duration_days": 30,
         })
     assert response.status_code == 422
+
+
+def test_api_includes_recent_quote_history():
+    with TestClient(app_module.app) as client:
+        with SessionLocal() as db:
+            db.add(Quote(
+                symbol="HIST",
+                price_eur=12.5,
+                price_native=13.0,
+                currency="USD",
+                eurusd=1.04,
+                market_state="REGULAR",
+                market_time=1_700_000_060,
+                fetched_at=1_700_000_060,
+                source="test",
+            ))
+            db.add(QuoteHistory(
+                symbol="HIST",
+                price_eur=12.5,
+                market_time=1_700_000_060,
+                fetched_at=1_700_000_060,
+            ))
+            db.commit()
+
+        response = client.get("/api/state")
+
+    quote = next(item for item in response.json()["quotes"] if item["symbol"] == "HIST")
+    assert quote["history"] == [{
+        "price": 12.5,
+        "market_time": 1_700_000_060,
+        "fetched_at": 1_700_000_060,
+    }]
