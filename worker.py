@@ -35,6 +35,12 @@ _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
 
 
+def history_period(interval: str) -> str:
+    if interval == "1m":
+        return "7d"
+    return "1y" if interval == "1d" else "1mo"
+
+
 def start_worker() -> None:
     global _worker_thread
     if _worker_thread and _worker_thread.is_alive():
@@ -83,7 +89,7 @@ def _poll_market() -> None:
             symbols = list(ASSETS)
             interval = "5m"
 
-    period = "1y" if interval == "1d" else "1mo"
+    period = history_period(interval)
     snapshots = {symbol: fetch_chart(symbol, interval, period) for symbol in symbols}
     eurusd = fetch_eurusd()
     now = time.time()
