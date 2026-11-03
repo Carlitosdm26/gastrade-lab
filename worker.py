@@ -5,7 +5,7 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from database import (
     Candle,
@@ -14,6 +14,7 @@ from database import (
     MarketStatus,
     Position,
     Quote,
+    QuoteHistory,
     SessionLocal,
     SignalCursor,
     Trade,
@@ -30,6 +31,7 @@ ASSETS = {
 }
 INTERVAL_SECONDS = {"1m": 60, "2m": 120, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d": 86400}
 POLL_SECONDS = max(30, int(os.getenv("MARKET_POLL_SECONDS", "60")))
+QUOTE_HISTORY_LIMIT = 120
 
 _stop_event = threading.Event()
 _worker_thread: threading.Thread | None = None
@@ -46,7 +48,7 @@ def start_worker() -> None:
     if _worker_thread and _worker_thread.is_alive():
         return
     _stop_event.clear()
-    _worker_thread = threading.Thread(target=_worker_loop, name="papertrade-market-worker", daemon=True)
+    _worker_thread = threading.Thread(target=_worker_loop, name="gastradelab-market-worker", daemon=True)
     _worker_thread.start()
 
 
@@ -129,6 +131,12 @@ def _poll_market() -> None:
             quote.fetched_at = now
             quote.source = SOURCE_NAME
             quote.error = None
+            db.add(QuoteHistory(
+                symbol=symbol,
+                price_eur=price_eur,
+                market_time=snapshot["market_time"],
+                fetched_at=now,
+            ))
 
             if experiment and symbol in active_symbols and active_interval == interval:
                 existing_timestamps = set(db.scalars(
@@ -153,6 +161,20 @@ def _poll_market() -> None:
                         source=SOURCE_NAME,
                     ))
         db.flush()
+
+        for symbol in snapshots:
+            recent_ids = db.scalars(
+                select(QuoteHistory.id)
+                .where(QuoteHistory.symbol == symbol)
+                .order_by(QuoteHistory.fetched_at.desc(), QuoteHistory.id.desc())
+                .limit(QUOTE_HISTORY_LIMIT)
+            ).all()
+            db.execute(
+                delete(QuoteHistory).where(
+                    QuoteHistory.symbol == symbol,
+                    QuoteHistory.id.not_in(recent_ids),
+                )
+            )
 
         market_status = db.get(MarketStatus, "primary")
         if market_status is None:
@@ -207,28 +229,29 @@ def _process_signals(db, experiment: Experiment, now: float) -> None:
         if not new_candles:
             continue
 
-        for candle in new_candles:
-            history = [item for item in candles if item.timestamp <= candle.timestamp]
-            closes_native = [item.close for item in history]
-            signal = crossover_signal(closes_native, config["fast_period"], config["slow_period"])
-            quote_rate = candle.eurusd if candle.currency == "USD" else 1.0
-            price_eur = candle.close / quote_rate
-            position = db.get(Position, {"experiment_id": experiment.id, "symbol": symbol})
-            prices = {
-                item.symbol: item.price_eur
-                for item in db.scalars(select(Quote).where(Quote.symbol.in_(config["symbols"]))).all()
-            }
-            value = experiment.cash + sum(
-                item.quantity * prices.get(item.symbol, price_eur if item.symbol == symbol else 0)
-                for item in db.scalars(select(Position).where(Position.experiment_id == experiment.id)).all()
-            )
-            target_value = value * config["allocation_percent"] / 100 / assets_count
+        # Never replay missed signals as a burst of trades after downtime.
+        candle = new_candles[-1]
+        history = [item for item in candles if item.timestamp <= candle.timestamp]
+        closes_native = [item.close for item in history]
+        signal = crossover_signal(closes_native, config["fast_period"], config["slow_period"])
+        quote_rate = candle.eurusd if candle.currency == "USD" else 1.0
+        price_eur = candle.close / quote_rate
+        position = db.get(Position, {"experiment_id": experiment.id, "symbol": symbol})
+        prices = {
+            item.symbol: item.price_eur
+            for item in db.scalars(select(Quote).where(Quote.symbol.in_(config["symbols"]))).all()
+        }
+        value = experiment.cash + sum(
+            item.quantity * prices.get(item.symbol, price_eur if item.symbol == symbol else 0)
+            for item in db.scalars(select(Position).where(Position.experiment_id == experiment.id)).all()
+        )
+        target_value = value * config["allocation_percent"] / 100 / assets_count
 
-            if signal == "buy" and position is None and experiment.cash > 0:
-                _execute_trade(db, experiment, symbol, "buy", price_eur, config["fee_rate"], min(target_value, experiment.cash), now)
-            elif signal == "sell" and position is not None:
-                _execute_trade(db, experiment, symbol, "sell", price_eur, config["fee_rate"], 0, now)
-            cursor.candle_timestamp = candle.timestamp
+        if signal == "buy" and position is None and experiment.cash > 0:
+            _execute_trade(db, experiment, symbol, "buy", price_eur, config["fee_rate"], min(target_value, experiment.cash), now)
+        elif signal == "sell" and position is not None:
+            _execute_trade(db, experiment, symbol, "sell", price_eur, config["fee_rate"], 0, now)
+        cursor.candle_timestamp = candle.timestamp
 
         db.flush()
 
@@ -284,3 +307,4 @@ def _execute_trade(db, experiment: Experiment, symbol: str, side: str, price: fl
         fee=fee,
         executed_at=now,
     ))
+    db.flush()

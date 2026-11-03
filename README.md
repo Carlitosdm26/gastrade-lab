@@ -1,6 +1,6 @@
-# Papertrade Lab
+# GastradeLab
 
-Papertrade Lab es un simulador de trading automático de acciones. Su interfaz web controla y observa un servicio de fondo; las operaciones se procesan en el servidor, no en la pestaña del navegador. Cerrar la página no detiene un experimento.
+GastradeLab es un simulador de trading automático de acciones. Su interfaz web controla y observa un servicio de fondo; las operaciones se procesan en el servidor, no en la pestaña del navegador. Cerrar la página no detiene un experimento.
 
 > **Solo paper trading.** La aplicación no conecta con brokers ni envía órdenes reales. Los resultados simulados no predicen ganancias futuras.
 
@@ -9,7 +9,8 @@ Papertrade Lab es un simulador de trading automático de acciones. Su interfaz w
 1. Configura el saldo virtual, entre una y tres acciones, comisión, porcentaje de capital, intervalo de velas y duración.
 2. Pulsa **Iniciar experimento**. La duración predeterminada es 30 días; se puede elegir entre 7, 14, 30 y 45 días.
 3. Un worker consulta las cotizaciones en segundo plano, guarda las velas completas y ejecuta la estrategia únicamente cuando aparece una vela nueva y cerrada.
-4. Por defecto utiliza un cruce de medias móviles (7 y 21 periodos), saldo inicial de 10.000 EUR, acciones AAPL/MSFT/NVDA, velas de 5 minutos, comisión del 0,1 % y un máximo de capital asignado del 80 %. Todos esos valores se configuran antes de iniciar.
+	El dashboard conserva hasta 120 consultas recientes por acción para comparar cómo cambia el precio.
+4. Por defecto utiliza un cruce de medias móviles (7 y 21 periodos), saldo inicial de 500 EUR, acciones AAPL/MSFT/NVDA, velas de 5 minutos, comisión del 0,1 % y un máximo de capital asignado del 80 %. Todos esos valores se configuran antes de iniciar.
 5. Desde el panel puedes pausar, reanudar o finalizar. Al alcanzar la duración se cierra la sesión automáticamente y su resultado permanece en el historial.
 
 Una simulación pausada no acumula tiempo activo. Si el contenedor se reinicia, el estado, las posiciones, las operaciones y las velas se recuperan de la base de datos. El plazo se mide en tiempo natural; si el host estuvo apagado, el worker no puede reconstruir operaciones que no ejecutó mientras estaba fuera.
@@ -33,9 +34,9 @@ docker compose up -d --build
 ```
 
 4. Abre `http://IP_DEL_HOST:8080`.
-5. Comprueba el estado con `docker compose ps` y consulta los registros con `docker compose logs -f papertrade`.
+5. Comprueba el estado con `docker compose ps` y consulta los registros con `docker compose logs -f gastradelab`.
 
-Compose aplica `restart: unless-stopped`; el daemon de Docker del host debe habilitarse al arranque y el dispositivo debe permanecer encendido y conectado a Internet. El volumen `papertrade_data` conserva la base aunque se actualice o recree el contenedor.
+Compose aplica `restart: unless-stopped`; el daemon de Docker del host debe habilitarse al arranque y el dispositivo debe permanecer encendido y conectado a Internet. El volumen persistente conserva la base aunque se actualice o recree el contenedor.
 
 ### Inicio local sin Docker
 
@@ -58,7 +59,7 @@ Por defecto, SQLAlchemy usa SQLite en `/data/papertrade.db` dentro del contenedo
 Para usar PostgreSQL, configura `DATABASE_URL` en `.env`, por ejemplo:
 
 ```env
-DATABASE_URL=postgresql+psycopg://USUARIO:CONTRASENA@SERVIDOR:5432/papertrade
+DATABASE_URL=postgresql+psycopg://USUARIO:CONTRASENA@SERVIDOR:5432/gastradelab
 ```
 
 La aplicación crea las tablas en la base indicada. Configurar otra base **no copia** los registros existentes de SQLite; la migración de datos se debe realizar por separado. Mantén `.env` privado y no añadas credenciales al repositorio.
@@ -70,7 +71,7 @@ pip install -r requirements-dev.txt
 pytest -q
 ```
 
-La suite verifica señales y comisiones, el control de experimentos, la creación del esquema y que el worker solo opere después de una vela nueva cerrada.
+La suite verifica señales y comisiones, el control de experimentos, la creación del esquema, el historial de cotizaciones y que el worker solo opere después de una vela nueva cerrada.
 
 ## Estructura
 

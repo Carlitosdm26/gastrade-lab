@@ -72,6 +72,17 @@ class Quote(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
+class QuoteHistory(Base):
+    __tablename__ = "quote_history"
+    __table_args__ = (Index("ix_quote_history_symbol_fetched", "symbol", "fetched_at"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(16))
+    price_eur: Mapped[float] = mapped_column(Float)
+    market_time: Mapped[float] = mapped_column(Float)
+    fetched_at: Mapped[float] = mapped_column(Float)
+
+
 class Candle(Base):
     __tablename__ = "candles"
     __table_args__ = (

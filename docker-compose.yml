@@ -1,10 +1,10 @@
 services:
-  papertrade:
+  gastradelab:
     build: .
-    container_name: papertrade-lab
+    container_name: gastradelab
     restart: unless-stopped
     ports:
-      - "${PAPERTRADE_PORT:-8080}:8080"
+      - "${GASTRADELAB_PORT:-8080}:8080"
     environment:
       DATABASE_URL: ${DATABASE_URL:-sqlite:////data/papertrade.db}
       MARKET_POLL_SECONDS: ${MARKET_POLL_SECONDS:-60}
@@ -22,4 +22,5 @@ services:
       start_period: 20s
 
 volumes:
+  # Keep the existing volume key so stored experiments remain available.
   papertrade_data:

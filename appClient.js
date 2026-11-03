@@ -10,6 +10,7 @@
   const percent = new Intl.NumberFormat("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   let appState = null;
   let sessions = [];
+  let openQuoteHistorySymbol = null;
   let loadedAt = Date.now();
   let chartRange = "24h";
   let toastTimer;
@@ -61,27 +62,85 @@
       const name = document.createElement("div");
       name.className = "market-name";
       name.textContent = quote.name;
+      item.dataset.symbol = quote.symbol;
+      item.classList.toggle("history-open", openQuoteHistorySymbol === quote.symbol);
+      const priceButton = document.createElement("button");
+      priceButton.type = "button";
+      priceButton.className = "market-price-trigger";
+      priceButton.setAttribute("aria-label", `Ver últimas consultas de ${quote.symbol}`);
+      priceButton.setAttribute("aria-controls", `quote-history-${quote.symbol}`);
+      priceButton.setAttribute("aria-expanded", String(openQuoteHistorySymbol === quote.symbol));
+      priceButton.title = `Ver historial reciente de ${quote.symbol}`;
       const price = document.createElement("div");
       price.className = "market-price";
       price.textContent = euro(quote.price);
+      const historyHint = document.createElement("span");
+      historyHint.className = "market-history-hint";
+      historyHint.textContent = "HISTORIAL";
+      priceButton.append(price, historyHint);
+      priceButton.addEventListener("click", () => {
+        openQuoteHistorySymbol = openQuoteHistorySymbol === quote.symbol ? null : quote.symbol;
+        marketList.querySelectorAll(".market-item").forEach((marketItem) => {
+          const expanded = marketItem.dataset.symbol === openQuoteHistorySymbol;
+          marketItem.classList.toggle("history-open", expanded);
+          marketItem.querySelector(".market-price-trigger")?.setAttribute("aria-expanded", String(expanded));
+        });
+      });
+      const historyPanel = document.createElement("div");
+      historyPanel.className = "quote-history";
+      historyPanel.id = `quote-history-${quote.symbol}`;
+      historyPanel.setAttribute("role", "region");
+      historyPanel.setAttribute("aria-label", `Historial de consultas de ${quote.symbol}`);
+      const historyHeader = document.createElement("div");
+      historyHeader.className = "quote-history-header";
+      historyHeader.textContent = "Últimas consultas";
+      historyPanel.append(historyHeader);
+      const historyList = document.createElement("div");
+      historyList.className = "quote-history-list";
+      for (const point of quote.history || []) {
+        const row = document.createElement("div");
+        row.className = "quote-history-row";
+        const timestamp = document.createElement("time");
+        timestamp.dateTime = new Date(Number(point.fetched_at) * 1000).toISOString();
+        timestamp.textContent = time(point.fetched_at, { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+        const historyPrice = document.createElement("span");
+        historyPrice.textContent = euro(point.price);
+        row.append(timestamp, historyPrice);
+        historyList.append(row);
+      }
+      if (!historyList.childElementCount) {
+        const emptyHistory = document.createElement("div");
+        emptyHistory.className = "quote-history-empty";
+        emptyHistory.textContent = "Aún no hay consultas guardadas.";
+        historyList.append(emptyHistory);
+      }
+      historyPanel.append(historyList);
       const state = document.createElement("div");
-      const fresh = Date.now() / 1000 - quote.fetched_at < 180;
+      const quoteTime = quote.market_time || quote.fetched_at;
+      const quoteAge = Math.max(0, Date.now() / 1000 - quoteTime);
+      const fresh = quoteAge < 180;
       const stateKnown = quote.market_state !== "UNKNOWN";
       state.className = `market-state ${quote.error ? "error" : fresh && stateKnown && quote.market_state === "REGULAR" ? "open" : "closed"}`;
-      state.textContent = quote.error ? "Sin cotización" : `${marketStateLabel(quote.market_state)} · ${fresh ? "actualizada" : `hace ${formatAge(quote.fetched_at)}`}`;
-      item.append(symbol, name, price, state);
+      const freshnessLabel = quoteAge < 60 ? "Ahora mismo" : `hace ${formatAge(quoteTime)}`;
+      state.textContent = quote.error ? "Sin cotización" : `${marketStateLabel(quote.market_state)} · ${freshnessLabel}`;
+      item.append(symbol, name, priceButton, state, historyPanel);
       marketList.append(item);
     }
 
     const indicator = elements.feedIndicator;
     const lastSuccess = appState?.market?.last_success_at;
-    const ageSeconds = lastSuccess ? Date.now() / 1000 - lastSuccess : Infinity;
+    const marketTimes = quotes.map((quote) => Number(quote.market_time)).filter(Number.isFinite);
+    const latestMarketTime = marketTimes.length ? Math.max(...marketTimes) : null;
+    const ageSeconds = latestMarketTime ? Math.max(0, Date.now() / 1000 - latestMarketTime) : Infinity;
     if (appState?.market?.last_error && !quotes.length) {
       indicator.dataset.mode = "error";
       elements.feedLabel.textContent = "Sin datos de mercado";
     } else if (ageSeconds < 180) {
       indicator.dataset.mode = "live";
-      elements.feedLabel.textContent = "Cotizaciones actualizadas";
+      elements.feedLabel.textContent = ageSeconds < 60 ? "Ahora mismo" : "Precios recientes";
+    } else if (latestMarketTime) {
+      indicator.dataset.mode = "mixed";
+      elements.feedLabel.textContent = `Últimos precios hace ${formatAge(latestMarketTime)}`;
     } else if (lastSuccess) {
       indicator.dataset.mode = "mixed";
       elements.feedLabel.textContent = `Última consulta hace ${formatAge(lastSuccess)}`;
@@ -89,7 +148,7 @@
       indicator.dataset.mode = "waiting";
       elements.feedLabel.textContent = "Esperando cotizaciones";
     }
-    document.getElementById("market-updated").textContent = lastSuccess ? `Última consulta ${time(lastSuccess)}` : appState?.market?.last_error ? "Error al consultar el proveedor" : "Esperando primera cotización";
+    document.getElementById("market-updated").textContent = latestMarketTime ? `Último precio ${time(latestMarketTime)}` : lastSuccess ? `Última consulta ${time(lastSuccess)}` : appState?.market?.last_error ? "Error al consultar el proveedor" : "Esperando primera cotización";
   }
 
   function marketStateLabel(value) {
@@ -137,7 +196,8 @@
     elements.primaryRunButton.textContent = active ? (experiment.status === "paused" ? "Reanudar simulación" : "Sesión en curso") : "Iniciar simulación +";
     elements.primaryRunButton.setAttribute("aria-label", elements.primaryRunButton.textContent);
     document.getElementById("session-id").textContent = experiment ? `INICIO ${time(experiment.started_at, { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "No hay sesión activa";
-    document.getElementById("runtime-strategy").textContent = experiment ? `Cruce ${experiment.config.fast_period}/${experiment.config.slow_period}` : "Cruce de medias";
+    const intervalLabels = { "1m": "1 min", "2m": "2 min", "5m": "5 min", "15m": "15 min", "30m": "30 min", "1h": "1 h", "1d": "1 día" };
+    document.getElementById("runtime-strategy").textContent = experiment ? `Cruce ${experiment.config.fast_period}/${experiment.config.slow_period} · ${intervalLabels[experiment.config.interval] || experiment.config.interval}` : "Cruce de medias";
     document.getElementById("runtime-assets").textContent = experiment?.config.symbols.join(" · ") || "";
     document.getElementById("runtime-hint").textContent = experiment?.error || "El worker del servidor sigue activo si cierras esta página. El equipo y el contenedor deben permanecer encendidos.";
     setStatus(experiment);
@@ -229,7 +289,7 @@
     ctx.scale(ratio, ratio);
     const width = rect.width;
     const height = rect.height;
-    const padding = { top: 14, right: 8, bottom: 10, left: 52 };
+    const padding = { top: 14, right: 8, bottom: 10, left: 64 };
     const plotWidth = width - padding.left - padding.right;
     const plotHeight = height - padding.top - padding.bottom;
     let points = experiment?.history || [];
@@ -239,9 +299,21 @@
     const values = points.map((item) => item.value);
     let minimum = Math.min(...values);
     let maximum = Math.max(...values);
-    const margin = (maximum - minimum) || Math.max(Math.abs(maximum) * 0.015, 1);
-    minimum -= margin * 0.18;
-    maximum += margin * 0.18;
+    const dataRange = maximum - minimum;
+    const targetStep = Math.max(dataRange / 4, 1);
+    const magnitude = 10 ** Math.floor(Math.log10(targetStep));
+    const normalizedStep = targetStep / magnitude;
+    const tickStep = (normalizedStep <= 1 ? 1 : normalizedStep <= 2 ? 2 : normalizedStep <= 5 ? 5 : 10) * magnitude;
+    if (dataRange === 0) {
+      const center = Math.round(values[0]);
+      minimum = center - 2 * tickStep;
+      maximum = center + 2 * tickStep;
+    } else {
+      minimum = Math.floor(minimum / tickStep) * tickStep;
+      maximum = Math.ceil(maximum / tickStep) * tickStep;
+    }
+    const tickCount = Math.round((maximum - minimum) / tickStep);
+    const tickFormat = new Intl.NumberFormat("es-ES", { maximumFractionDigits: 0 });
     const x = (index) => padding.left + (points.length <= 1 ? plotWidth : index / (points.length - 1) * plotWidth);
     const y = (value) => padding.top + (maximum - value) / (maximum - minimum) * plotHeight;
 
@@ -249,21 +321,20 @@
     ctx.font = "9px 'IBM Plex Mono', monospace";
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
-    for (let index = 0; index < 4; index += 1) {
-      const ratioY = index / 3;
-      const yPosition = padding.top + ratioY * plotHeight;
-      const label = maximum - ratioY * (maximum - minimum);
+    for (let index = 0; index <= tickCount; index += 1) {
+      const label = maximum - index * tickStep;
+      const yPosition = y(label);
       ctx.beginPath();
       ctx.moveTo(padding.left, yPosition);
       ctx.lineTo(width - padding.right, yPosition);
-      ctx.strokeStyle = "#edf1ed";
+      ctx.strokeStyle = "#1b3827";
       ctx.stroke();
-      ctx.fillStyle = "#9aa49e";
-      ctx.fillText(new Intl.NumberFormat("es-ES", { notation: "compact", maximumFractionDigits: 1 }).format(label), padding.left - 8, yPosition);
+      ctx.fillStyle = "#829987";
+      ctx.fillText(tickFormat.format(label), padding.left - 8, yPosition);
     }
 
     const gradient = ctx.createLinearGradient(0, padding.top, 0, height - padding.bottom);
-    gradient.addColorStop(0, "rgba(18, 139, 91, .17)");
+    gradient.addColorStop(0, "rgba(69, 239, 145, .17)");
     gradient.addColorStop(1, "rgba(18, 139, 91, 0)");
     ctx.beginPath();
     points.forEach((point, index) => index ? ctx.lineTo(x(index), y(point.value)) : ctx.moveTo(x(index), y(point.value)));
@@ -274,7 +345,7 @@
     ctx.fill();
     ctx.beginPath();
     points.forEach((point, index) => index ? ctx.lineTo(x(index), y(point.value)) : ctx.moveTo(x(index), y(point.value)));
-    ctx.strokeStyle = "#148257";
+    ctx.strokeStyle = "#45ef91";
     ctx.lineWidth = 2;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
@@ -282,9 +353,9 @@
     const last = points[points.length - 1];
     ctx.beginPath();
     ctx.arc(x(points.length - 1), y(last.value), 3.5, 0, Math.PI * 2);
-    ctx.fillStyle = "#d7f36a";
+    ctx.fillStyle = "#c7ff61";
     ctx.fill();
-    ctx.strokeStyle = "#148257";
+    ctx.strokeStyle = "#45ef91";
     ctx.lineWidth = 1.5;
     ctx.stroke();
     document.getElementById("chart-start-label").textContent = time(points[0].timestamp, { day: "2-digit", month: "short" }).toUpperCase();
@@ -372,6 +443,24 @@
 
   function init() {
     elements.setupForm.addEventListener("submit", startExperiment);
+    document.addEventListener("click", (event) => {
+      if (openQuoteHistorySymbol && !event.target.closest(".market-item")) {
+        openQuoteHistorySymbol = null;
+        document.querySelectorAll(".market-item.history-open").forEach((item) => {
+          item.classList.remove("history-open");
+          item.querySelector(".market-price-trigger")?.setAttribute("aria-expanded", "false");
+        });
+      }
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && openQuoteHistorySymbol) {
+        openQuoteHistorySymbol = null;
+        document.querySelectorAll(".market-item.history-open").forEach((item) => {
+          item.classList.remove("history-open");
+          item.querySelector(".market-price-trigger")?.setAttribute("aria-expanded", "false");
+        });
+      }
+    });
     elements.primaryRunButton.addEventListener("click", () => {
       if (appState?.experiment?.status === "paused") changeStatus("resume");
       else if (["running", "paused"].includes(appState?.experiment?.status)) document.getElementById("strategy").scrollIntoView({ behavior: "smooth" });
