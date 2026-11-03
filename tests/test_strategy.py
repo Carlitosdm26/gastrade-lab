@@ -1,4 +1,4 @@
-from strategy import crossover_signal, execute_trade, moving_average, portfolio_value
+from strategy import crossover_signal, execute_trade, moving_average, portfolio_value, threshold_entry_signal
 
 
 def test_moving_average_uses_last_values():
@@ -10,6 +10,13 @@ def test_crossover_signal_detects_confirmed_crosses():
     assert crossover_signal([10, 10, 9, 8, 7, 9, 11], 2, 3) == "buy"
     assert crossover_signal([11, 9, 8, 9, 10, 8, 6], 2, 3) == "sell"
     assert crossover_signal([1, 2, 3], 2, 3) == "hold"
+
+
+def test_threshold_entry_signal_detects_new_percent_or_price_crosses():
+    assert threshold_entry_signal([100, 100, 101, 107], "percent", 5, 2)
+    assert not threshold_entry_signal([100, 100, 106, 107], "percent", 5, 2)
+    assert threshold_entry_signal([98, 100], "price", 100, 3)
+    assert not threshold_entry_signal([101, 102], "price", 100, 3)
 
 
 def test_buy_and_sell_include_fees_in_cash_and_pnl():

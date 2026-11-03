@@ -1,9 +1,11 @@
 import time
+import threading
 
+import pytest
 from sqlalchemy import select
 
 import worker
-from database import Candle, Experiment, Position, QuoteHistory, SessionLocal, SignalCursor, Trade, init_db
+from database import Candle, Experiment, MarketStatus, Position, QuoteHistory, SessionLocal, SignalCursor, Trade, init_db
 
 
 def test_history_period_respects_yahoo_interval_limits():
@@ -88,6 +90,540 @@ def test_worker_trades_only_after_a_new_completed_candle(monkeypatch):
             select(QuoteHistory).where(QuoteHistory.symbol == symbol).order_by(QuoteHistory.fetched_at)
         ).all()
         assert [item.price_eur for item in quote_history] == [8.0, 10.0]
+
+
+def test_worker_processes_multiple_active_experiments_independently(monkeypatch):
+    init_db()
+    now = time.time()
+    interval = 300
+    current_slot = int(now // interval) * interval
+    symbol = "MULTIQUOTE"
+    closes = [10.0, 9.0, 8.0, 7.0, 8.0]
+    candles = [
+        {
+            "timestamp": current_slot - (len(closes) - index + 1) * interval,
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "volume": 1000,
+        }
+        for index, close in enumerate(closes)
+    ]
+    snapshot = {
+        "symbol": symbol,
+        "currency": "EUR",
+        "market_state": "REGULAR",
+        "market_time": now,
+        "price_native": closes[-1],
+        "candles": candles,
+    }
+    fetched = []
+    fetch_barrier = threading.Barrier(2)
+
+    def fake_fetch_chart(requested_symbol, requested_interval, _period):
+        fetched.append((requested_symbol, requested_interval))
+        if requested_symbol == symbol:
+            fetch_barrier.wait(timeout=1)
+        return {**snapshot, "candles": list(snapshot["candles"])}
+
+    monkeypatch.setattr(worker, "fetch_chart", fake_fetch_chart)
+    monkeypatch.setattr(worker, "fetch_eurusd", lambda: 1.0)
+
+    with SessionLocal() as db:
+        for index, (experiment_id, balance) in enumerate((("multi-worker-a", 1000), ("multi-worker-b", 2000))):
+            db.add(Experiment(
+                id=experiment_id,
+                status="running",
+                created_at=now + index,
+                started_at=now,
+                initial_balance=balance,
+                cash=balance,
+                realized_pnl=0,
+                total_fees=0,
+                config={
+                    "symbols": [symbol],
+                    "interval": "5m" if index == 0 else "1m",
+                    "fast_period": 2,
+                    "slow_period": 3,
+                    "fee_rate": 0.001,
+                    "allocation_percent": 80,
+                    "stop_loss_percent": 5,
+                    "duration_days": 30,
+                },
+                paused_total_seconds=0,
+            ))
+        db.commit()
+
+    worker._poll_market()
+    with SessionLocal() as db:
+        cursors = [db.get(SignalCursor, {"experiment_id": experiment_id, "symbol": symbol}) for experiment_id in ("multi-worker-a", "multi-worker-b")]
+        assert all(cursor is not None for cursor in cursors)
+
+    next_candle = {
+        "timestamp": current_slot - interval,
+        "open": 10.0,
+        "high": 10.0,
+        "low": 10.0,
+        "close": 10.0,
+        "volume": 1200,
+    }
+    snapshot["candles"].append(next_candle)
+    snapshot["price_native"] = next_candle["close"]
+    worker._poll_market()
+
+    with SessionLocal() as db:
+        trades = {
+            experiment_id: db.scalars(select(Trade).where(Trade.experiment_id == experiment_id)).all()
+            for experiment_id in ("multi-worker-a", "multi-worker-b")
+        }
+        assert len(trades["multi-worker-a"]) == 1
+        assert len(trades["multi-worker-b"]) == 1
+        assert trades["multi-worker-a"][0].side == "buy"
+        assert trades["multi-worker-b"][0].side == "buy"
+        assert trades["multi-worker-a"][0].notional == 800
+        assert trades["multi-worker-b"][0].notional == 1600
+        assert {("MULTIQUOTE", "5m"), ("MULTIQUOTE", "1m")} <= set(fetched)
+
+
+def test_worker_continues_valid_experiments_when_one_market_request_fails(monkeypatch):
+    init_db()
+    now = time.time()
+    interval = 300
+    current_slot = int(now // interval) * interval
+    valid_symbol = "VALIDQUOTE"
+    failing_symbol = "FAILINGQUOTE"
+    closes = [10.0, 9.0, 8.0, 7.0, 8.0]
+    candles = [
+        {
+            "timestamp": current_slot - (len(closes) - index + 1) * interval,
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "volume": 1000,
+        }
+        for index, close in enumerate(closes)
+    ]
+    snapshot = {
+        "symbol": valid_symbol,
+        "currency": "EUR",
+        "market_state": "REGULAR",
+        "market_time": now,
+        "price_native": closes[-1],
+        "candles": candles,
+    }
+
+    def fake_fetch_chart(symbol, interval_name, _period):
+        if symbol == failing_symbol:
+            raise RuntimeError("Yahoo timeout de prueba")
+        return {**snapshot, "candles": list(snapshot["candles"])}
+
+    monkeypatch.setattr(worker, "fetch_chart", fake_fetch_chart)
+    monkeypatch.setattr(worker, "fetch_eurusd", lambda: 1.0)
+
+    with SessionLocal() as db:
+        for experiment_id, symbol in (("worker-valid", valid_symbol), ("worker-failing", failing_symbol)):
+            db.add(Experiment(
+                id=experiment_id,
+                status="running",
+                created_at=now,
+                started_at=now,
+                initial_balance=1000,
+                cash=1000,
+                realized_pnl=0,
+                total_fees=0,
+                config={
+                    "symbols": [symbol],
+                    "interval": "5m",
+                    "fast_period": 2,
+                    "slow_period": 3,
+                    "fee_rate": 0.001,
+                    "allocation_percent": 80,
+                    "stop_loss_percent": 5,
+                    "duration_days": 30,
+                },
+                paused_total_seconds=0,
+            ))
+            db.add_all([
+                *[
+                    Candle(
+                        symbol=symbol,
+                        interval="5m",
+                        timestamp=candle["timestamp"],
+                        open=candle["open"],
+                        high=candle["high"],
+                        low=candle["low"],
+                        close=candle["close"],
+                        volume=candle["volume"],
+                        currency="EUR",
+                        eurusd=1.0,
+                        source="test",
+                    )
+                    for candle in candles
+                ],
+                SignalCursor(
+                    experiment_id=experiment_id,
+                    symbol=symbol,
+                    candle_timestamp=candles[-1]["timestamp"],
+                ),
+            ])
+        db.commit()
+
+    next_candle = {
+        "timestamp": current_slot - interval,
+        "open": 10.0,
+        "high": 10.0,
+        "low": 10.0,
+        "close": 10.0,
+        "volume": 1200,
+    }
+    snapshot["candles"].append(next_candle)
+    snapshot["price_native"] = next_candle["close"]
+
+    worker._poll_market()
+
+    with SessionLocal() as db:
+        valid_trades = db.scalars(select(Trade).where(Trade.experiment_id == "worker-valid")).all()
+        failing_trades = db.scalars(select(Trade).where(Trade.experiment_id == "worker-failing")).all()
+        failing = db.get(Experiment, "worker-failing")
+        status = db.get(MarketStatus, "primary")
+        assert len(valid_trades) == 1
+        assert valid_trades[0].side == "buy"
+        assert failing_trades == []
+        assert "FAILINGQUOTE" in failing.error
+        assert "FAILINGQUOTE" in status.last_error
+
+
+@pytest.mark.parametrize(
+    ("case_name", "open_price", "high_price", "low_price", "close_price", "expected_side", "expected_fill"),
+    [
+        ("dip-buy", 99.0, 100.0, 97.5, 98.0, "buy", 98.0),
+        ("profit-sell", 101.5, 103.0, 100.5, 101.8, "sell", 102.0),
+    ],
+)
+def test_worker_uses_grid_steps_and_partial_profit_taking(
+    monkeypatch, case_name, open_price, high_price, low_price, close_price, expected_side, expected_fill
+):
+    init_db()
+    now = time.time()
+    interval = 300
+    current_slot = int(now // interval) * interval
+    symbol = f"GRID-{case_name}"
+    experiment_id = f"grid-worker-{case_name}"
+    previous_closes = [110.0, 105.0, 100.0]
+    first_timestamp = current_slot - 4 * interval
+    candles = [
+        {
+            "timestamp": first_timestamp + index * interval,
+            "open": close,
+            "high": close,
+            "low": close,
+            "close": close,
+            "volume": 1000,
+        }
+        for index, close in enumerate(previous_closes)
+    ]
+    grid_candle = {
+        "timestamp": current_slot - interval,
+        "open": open_price,
+        "high": high_price,
+        "low": low_price,
+        "close": close_price,
+        "volume": 1200,
+    }
+    candles.append(grid_candle)
+    snapshot = {
+        "symbol": symbol,
+        "currency": "EUR",
+        "market_state": "REGULAR",
+        "market_time": now,
+        "price_native": close_price,
+        "candles": candles,
+    }
+    monkeypatch.setattr(worker, "fetch_chart", lambda *_args: snapshot)
+    monkeypatch.setattr(worker, "fetch_eurusd", lambda: 1.0)
+    monkeypatch.setattr(
+        worker,
+        "_get_running_experiments",
+        lambda db: db.scalars(select(Experiment).where(Experiment.id == experiment_id, Experiment.status == "running")).all(),
+    )
+
+    with SessionLocal() as db:
+        db.add(Experiment(
+            id=experiment_id,
+            status="running",
+            created_at=now,
+            started_at=now,
+            initial_balance=1000,
+            cash=700,
+            realized_pnl=0,
+            total_fees=0.3,
+            config={
+                "symbols": [symbol],
+                "interval": "5m",
+                "fast_period": 2,
+                "slow_period": 3,
+                "fee_rate": 0.001,
+                "allocation_percent": 80,
+                "stop_loss_percent": 5,
+                "grid_step_percent": 2,
+                "take_profit_percent": 2,
+                "grid_tranches": 4,
+                "duration_days": 30,
+            },
+            paused_total_seconds=0,
+        ))
+        db.add_all([
+            *[
+                Candle(
+                    symbol=symbol,
+                    interval="5m",
+                    timestamp=item["timestamp"],
+                    open=item["open"],
+                    high=item["high"],
+                    low=item["low"],
+                    close=item["close"],
+                    volume=item["volume"],
+                    currency="EUR",
+                    eurusd=1.0,
+                    source="test",
+                )
+                for item in candles[:-1]
+            ],
+            Position(
+                experiment_id=experiment_id,
+                symbol=symbol,
+                quantity=3,
+                average_price=100,
+                opened_at=now - interval,
+            ),
+            Trade(
+                experiment_id=experiment_id,
+                symbol=symbol,
+                side="buy",
+                quantity=3,
+                price=100,
+                notional=300,
+                fee=0.3,
+                executed_at=now - interval,
+            ),
+            SignalCursor(
+                experiment_id=experiment_id,
+                symbol=symbol,
+                candle_timestamp=candles[-2]["timestamp"],
+            ),
+        ])
+        db.commit()
+
+    worker._poll_market()
+
+    with SessionLocal() as db:
+        trades = db.scalars(
+            select(Trade).where(Trade.experiment_id == experiment_id).order_by(Trade.executed_at, Trade.id)
+        ).all()
+        position = db.get(Position, {"experiment_id": experiment_id, "symbol": symbol})
+        assert len(trades) == 2
+        assert trades[-1].side == expected_side
+        assert trades[-1].price == expected_fill
+        assert trades[-1].quantity < 3
+        assert position is not None
+        if expected_side == "buy":
+            assert position.quantity > 3
+        else:
+            assert 0 < position.quantity < 3
+
+
+def test_momentum_target_only_sells_after_net_profit_target():
+    init_db()
+    now = time.time()
+    symbol = "MOMENTUM-EXIT"
+    experiment_id = "momentum-target-exit"
+    with SessionLocal() as db:
+        experiment = Experiment(
+            id=experiment_id,
+            status="running",
+            created_at=now,
+            started_at=now,
+            initial_balance=1_000,
+            cash=1_000,
+            realized_pnl=0,
+            total_fees=0,
+            config={
+                "symbols": [symbol],
+                "interval": "5m",
+                "fee_rate": 0.001,
+                "allocation_percent": 80,
+                "strategy": "momentum_target",
+                "entry_trigger_type": "percent",
+                "entry_change_percent": 1,
+                "entry_lookback_candles": 2,
+                "profit_target_percent": 2,
+                "stop_loss_percent": 5,
+            },
+            paused_total_seconds=0,
+        )
+        db.add(experiment)
+        db.flush()
+        history = [
+            Candle(
+                symbol=symbol, interval="5m", timestamp=now - (3 - index) * 300,
+                open=100, high=100, low=100, close=100, volume=1000,
+                currency="EUR", eurusd=1, source="test",
+            )
+            for index in range(3)
+        ]
+        entry_candle = Candle(
+            symbol=symbol, interval="5m", timestamp=now, open=100, high=102,
+            low=99, close=102, volume=1000, currency="EUR", eurusd=1, source="test",
+        )
+        worker._process_momentum_target(db, experiment, symbol, [*history, entry_candle], entry_candle, now)
+        position = db.get(Position, {"experiment_id": experiment_id, "symbol": symbol})
+        assert position is not None
+        assert db.scalar(select(Trade).where(Trade.experiment_id == experiment_id, Trade.side == "buy")) is not None
+
+        below_target = Candle(
+            symbol=symbol, interval="5m", timestamp=now + 300, open=position.average_price * 0.9,
+            high=position.average_price * 1.01, low=position.average_price * 0.9,
+            close=position.average_price * 0.95, volume=1000,
+            currency="EUR", eurusd=1, source="test",
+        )
+        worker._process_momentum_target(db, experiment, symbol, [*history, below_target], below_target, now + 300)
+        assert len(db.scalars(select(Trade).where(Trade.experiment_id == experiment_id)).all()) == 1
+        assert db.get(Position, {"experiment_id": experiment_id, "symbol": symbol}) is not None
+
+        sell_target = position.average_price * 1.02 / (1 - experiment.config["fee_rate"])
+        at_target = Candle(
+            symbol=symbol, interval="5m", timestamp=now + 600, open=sell_target - 1,
+            high=sell_target + 1, low=sell_target - 2, close=sell_target,
+            volume=1000, currency="EUR", eurusd=1, source="test",
+        )
+        worker._process_momentum_target(db, experiment, symbol, [*history, at_target], at_target, now + 600)
+        trades = db.scalars(select(Trade).where(Trade.experiment_id == experiment_id).order_by(Trade.id)).all()
+        assert [trade.side for trade in trades] == ["buy", "sell"]
+        assert trades[-1].price >= sell_target
+        assert experiment.realized_pnl > 0
+        assert db.get(Position, {"experiment_id": experiment_id, "symbol": symbol}) is None
+
+
+@pytest.mark.parametrize(
+    ("open_price", "low_price", "close_price", "expected_fill", "catch_up"),
+    [
+        (195.0, 189.0, 192.0, 190.0, False),
+        (180.0, 175.0, 178.0, 180.0, False),
+        (195.0, 191.0, 192.0, None, False),
+        (195.0, 189.0, 192.0, 190.0, True),
+    ],
+)
+def test_worker_applies_protective_stop_and_respects_gaps(
+    monkeypatch, open_price, low_price, close_price, expected_fill, catch_up
+):
+    init_db()
+    now = time.time()
+    interval = 300
+    current_slot = int(now // interval) * interval
+    test_suffix = f"{int(open_price * 10)}-{int(low_price * 10)}-{int(catch_up)}"
+    symbol = f"STOP-{test_suffix}"
+    experiment_id = f"worker-stop-{test_suffix}"
+    previous_timestamp = current_slot - (3 if catch_up else 2) * interval
+    stop_candle_timestamp = previous_timestamp + interval
+    candles = [{
+        "timestamp": previous_timestamp,
+        "open": 200.0,
+        "high": 201.0,
+        "low": 199.0,
+        "close": 200.0,
+        "volume": 1000,
+    }, {
+        "timestamp": stop_candle_timestamp,
+        "open": open_price,
+        "high": max(open_price, close_price),
+        "low": low_price,
+        "close": close_price,
+        "volume": 1200,
+    }]
+    if catch_up:
+        candles.append({
+            "timestamp": stop_candle_timestamp + interval,
+            "open": close_price,
+            "high": close_price + 3,
+            "low": close_price,
+            "close": close_price + 2,
+            "volume": 1300,
+        })
+    snapshot = {
+        "symbol": symbol,
+        "currency": "EUR",
+        "market_state": "REGULAR",
+        "market_time": now,
+        "price_native": candles[-1]["close"],
+        "candles": candles,
+    }
+    monkeypatch.setattr(worker, "fetch_chart", lambda *_args: snapshot)
+    monkeypatch.setattr(worker, "fetch_eurusd", lambda: 1.0)
+
+    with SessionLocal() as db:
+        db.add(Experiment(
+            id=experiment_id,
+            status="running",
+            created_at=now,
+            started_at=now,
+            initial_balance=3000,
+            cash=1000,
+            realized_pnl=0,
+            total_fees=0,
+            config={
+                "symbols": [symbol],
+                "interval": "5m",
+                "fast_period": 2,
+                "slow_period": 3,
+                "fee_rate": 0.001,
+                "allocation_percent": 80,
+                "stop_loss_percent": 5,
+                "duration_days": 30,
+            },
+            paused_total_seconds=0,
+        ))
+        db.add(Candle(
+            symbol=symbol,
+            interval="5m",
+            timestamp=previous_timestamp,
+            open=200,
+            high=201,
+            low=199,
+            close=200,
+            volume=1000,
+            currency="EUR",
+            eurusd=1.0,
+            source="test",
+        ))
+        db.add(Position(
+            experiment_id=experiment_id,
+            symbol=symbol,
+            quantity=10,
+            average_price=200,
+            opened_at=now - interval,
+        ))
+        db.add(SignalCursor(
+            experiment_id=experiment_id,
+            symbol=symbol,
+            candle_timestamp=previous_timestamp,
+        ))
+        db.commit()
+
+    worker._poll_market()
+
+    with SessionLocal() as db:
+        trades = db.scalars(select(Trade).where(Trade.experiment_id == experiment_id)).all()
+        position = db.get(Position, {"experiment_id": experiment_id, "symbol": symbol})
+        if expected_fill is None:
+            assert trades == []
+            assert position is not None
+        else:
+            assert len(trades) == 1
+            assert trades[0].side == "sell"
+            assert trades[0].price == expected_fill
+            assert position is None
 
 
 def test_worker_uses_only_latest_candle_after_catch_up(monkeypatch):
