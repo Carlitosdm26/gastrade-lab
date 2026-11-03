@@ -6,6 +6,12 @@ import worker
 from database import Candle, Experiment, Position, SessionLocal, Trade, init_db
 
 
+def test_history_period_respects_yahoo_interval_limits():
+    assert worker.history_period("1m") == "7d"
+    assert worker.history_period("5m") == "1mo"
+    assert worker.history_period("1d") == "1y"
+
+
 def test_worker_trades_only_after_a_new_completed_candle(monkeypatch):
     init_db()
     now = time.time()
