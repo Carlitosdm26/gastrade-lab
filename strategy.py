@@ -3,6 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+TWO_CANDLE_ENTRY_RISE_PERCENT = 0.25
+TWO_CANDLE_MIN_NET_PROFIT_PERCENT = 0.5
+
 
 def moving_average(values: list[float], period: int) -> float | None:
     if period < 1 or len(values) < period:
@@ -43,6 +46,17 @@ def threshold_entry_signal(
     previous_change = (closes[-2] / closes[-2 - lookback_period] - 1) * 100
     current_change = (closes[-1] / closes[-1 - lookback_period] - 1) * 100
     return previous_change < trigger_value <= current_change
+
+
+def two_candle_signal(closes: list[float]) -> str:
+    if len(closes) < 2:
+        return "hold"
+    minimum_close = closes[-2] * (1 + TWO_CANDLE_ENTRY_RISE_PERCENT / 100)
+    if closes[-2] > 0 and closes[-1] >= minimum_close:
+        return "buy"
+    if closes[-1] < closes[-2]:
+        return "sell"
+    return "hold"
 
 
 def portfolio_value(portfolio: dict[str, Any], prices: dict[str, float]) -> float:

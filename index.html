@@ -6,11 +6,12 @@
   <meta name="theme-color" content="#07100b">
   <meta name="description" content="Laboratorio de paper trading para probar estrategias con saldo virtual y precios de mercado.">
   <title>GastradeLab | Simulador</title>
+  <link rel="icon" href="/favicon.svg?v=1" type="image/svg+xml">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css?v=15">
-  <script src="appClient.js?v=14" defer></script>
+  <script src="appClient.js?v=15" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -191,7 +192,7 @@
           <div><div class="section-kicker">COMPARATIVA</div><h2 id="experiments-title">Rentabilidad por experimento</h2></div>
           <span class="count-label" id="experiment-count">0 SESIONES</span>
         </div>
-        <div class="table-scroll"><table><thead><tr><th>INICIO</th><th>ACTIVOS</th><th>DURACIÓN</th><th>SALDO INICIAL</th><th>VALOR FINAL</th><th>RENTABILIDAD</th><th>RESULTADO</th><th>ESTADO</th><th>VISTA</th></tr></thead><tbody id="experiments-body"></tbody></table></div>
+        <div class="table-scroll"><table><thead><tr><th>INICIO</th><th>EXPERIMENTO</th><th>DURACIÓN</th><th>SALDO INICIAL</th><th>VALOR FINAL</th><th>RENTABILIDAD</th><th>RESULTADO</th><th>ESTADO</th><th>VISTA</th></tr></thead><tbody id="experiments-body"></tbody></table></div>
         <div class="table-empty" id="experiments-empty">Al finalizar un experimento, su resultado quedará guardado aquí.</div>
       </section>
 
@@ -207,6 +208,10 @@
       <button class="icon-button" id="close-experiment-button" type="button" title="Cerrar" aria-label="Cerrar configuración">×</button>
     </div>
     <form id="setup-form">
+      <div class="experiment-name-control">
+        <label class="field-label" for="experiment-name">Nombre del experimento <span>OPCIONAL</span></label>
+        <input id="experiment-name" name="name" class="number-field" type="text" maxlength="80" placeholder="Se genera automáticamente si lo dejas vacío">
+      </div>
       <label class="field-label" for="starting-balance">Saldo virtual inicial <span>EUR</span></label>
       <div class="input-wrap balance-input"><span>€</span><input id="starting-balance" name="startingBalance" type="number" min="100" max="1000000" step="100" value="500" required><span class="input-suffix">EUR</span></div>
 
@@ -223,8 +228,9 @@
 
       <label class="field-label" for="strategy-mode">Algoritmo <span>ESTRATEGIA</span></label>
       <select id="strategy-mode" name="strategy">
-        <option value="moving_average_grid" selected>Cruce de medias + grid</option>
-        <option value="momentum_target">Impulso + objetivo de beneficio</option>
+        <option value="moving_average_grid" selected>Medias móviles + grid escalonado</option>
+        <option value="momentum_target">Impulso por umbral + objetivo neto</option>
+        <option value="two_candle_profit">Tendencia 1m · entrada +0,25 % · objetivo neto +0,5 %</option>
       </select>
 
       <div class="field-row strategy-only" data-strategy="moving_average_grid">
@@ -285,7 +291,9 @@
         <p class="protective-note">Activa la venta al tocar el límite. Un salto de precio puede ampliar la pérdida.</p>
       </div>
 
-      <div class="strategy-description"><span class="strategy-icon">GRID</span><span>Grid escalonado<br><small>Entrada por cruce; añade al caer y vende por partes al subir.</small></span></div>
+      <div class="strategy-description strategy-only" data-strategy="moving_average_grid"><span class="strategy-icon">GRID</span><span>Medias móviles + grid escalonado<br><small>Entra por cruce; añade al caer y vende por partes al subir.</small></span></div>
+      <div class="strategy-description strategy-only" data-strategy="momentum_target"><span class="strategy-icon">MOM</span><span>Impulso por umbral + objetivo neto<br><small>Entra por subida porcentual o precio objetivo; sale al alcanzar el beneficio neto.</small></span></div>
+      <div class="strategy-description strategy-only" data-strategy="two_candle_profit"><span class="strategy-icon">1M</span><span>Tendencia 1m · entrada +0,25 % · objetivo neto +0,5 %<br><small>Ignora subidas menores del 0,25 %. Añade 20 % por señal; en un cierre bajista, liquida toda la posición solo al asegurar al menos 0,5 % neto.</small></span></div>
       <p class="form-error" id="form-error" role="alert"></p>
       <div class="form-actions">
         <button class="button button-secondary" id="cancel-experiment-button" type="button">Cancelar</button>
