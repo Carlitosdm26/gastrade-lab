@@ -11,6 +11,7 @@ def test_api_creates_schema_and_controls_experiment(monkeypatch):
     payload = {
         "starting_balance": 10_000,
         "symbols": ["AAPL", "MSFT"],
+        "name": "Prueba AAPL y MSFT",
         "fast_period": 7,
         "slow_period": 21,
         "interval": "5m",
@@ -29,6 +30,8 @@ def test_api_creates_schema_and_controls_experiment(monkeypatch):
         experiment = started.json()["experiment"]
         assert experiment["status"] == "running"
         assert experiment["total_value"] == 10_000
+        assert experiment["name"] == "Prueba AAPL y MSFT"
+        assert experiment["config"]["name"] == "Prueba AAPL y MSFT"
         assert experiment["config"]["stop_loss_percent"] == 5
         assert experiment["config"]["grid_step_percent"] == 2
         assert experiment["config"]["take_profit_percent"] == 2
@@ -43,6 +46,7 @@ def test_api_creates_schema_and_controls_experiment(monkeypatch):
         assert stopped.json()["experiment"]["status"] == "stopped"
         history = client.get("/api/sessions").json()[0]
         assert history["status"] == "stopped"
+        assert history["name"] == "Prueba AAPL y MSFT"
         assert history["config"]["symbols"] == ["AAPL", "MSFT"]
         assert history["total_value"] == 10_000
 
@@ -156,6 +160,41 @@ def test_api_requires_price_for_price_entry_trigger(monkeypatch):
             "duration_days": 7,
         })
     assert response.status_code == 422
+
+
+def test_api_accepts_two_candle_profit_only_with_one_minute_interval(monkeypatch):
+    monkeypatch.setattr(app_module, "start_worker", lambda: None)
+    monkeypatch.setattr(app_module, "stop_worker", lambda: None)
+    payload = {
+        "starting_balance": 1_000,
+        "symbols": ["AAPL"],
+        "strategy": "two_candle_profit",
+        "interval": "1m",
+        "fee_rate": 0.001,
+        "allocation_percent": 80,
+        "duration_days": 7,
+    }
+
+    with TestClient(app_module.app) as client:
+        accepted = client.post("/api/sessions", json=payload)
+        rejected = client.post("/api/sessions", json={**payload, "interval": "5m"})
+
+    assert accepted.status_code == 200
+    assert accepted.json()["experiment"]["config"]["strategy"] == "two_candle_profit"
+    assert "Tendencia 1m" in accepted.json()["experiment"]["name"]
+    assert "two_candle_buy_percent" not in accepted.json()["experiment"]["config"]
+    assert rejected.status_code == 422
+
+
+def test_favicon_svg_is_served(monkeypatch):
+    monkeypatch.setattr(app_module, "start_worker", lambda: None)
+    monkeypatch.setattr(app_module, "stop_worker", lambda: None)
+    with TestClient(app_module.app) as client:
+        response = client.get("/favicon.svg")
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/svg+xml")
+    assert b"<svg" in response.content
 
 
 def test_api_includes_recent_quote_history(monkeypatch):

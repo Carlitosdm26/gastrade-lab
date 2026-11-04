@@ -30,6 +30,18 @@
   const number = (value, digits = 6) => new Intl.NumberFormat("es-ES", { maximumFractionDigits: digits }).format(Number(value) || 0);
   const time = (timestamp, options = { hour: "2-digit", minute: "2-digit" }) => timestamp ? new Date(Number(timestamp) * 1000).toLocaleString("es-ES", options) : "—";
   const chartRangeLabels = { "24h": "1 día", "7d": "1 semana", "30d": "1 mes", all: "Todo el experimento" };
+  const strategyNames = {
+    moving_average_grid: "Medias móviles + grid escalonado",
+    momentum_target: "Impulso por umbral + objetivo neto",
+    two_candle_profit: "Tendencia 1m · entrada +0,25 % · objetivo neto +0,5 %",
+  };
+
+  function experimentName(experiment) {
+    const config = experiment?.config || {};
+    return experiment?.name?.trim()
+      || config.name?.trim()
+      || `${strategyNames[config.strategy] || "Experimento"} · ${(config.symbols || []).join(" · ")}`;
+  }
 
   function getSelectedExperiment() {
     const active = appState?.experiments || [];
@@ -63,16 +75,17 @@
       tab.setAttribute("aria-selected", String(experiment.id === selectedExperimentId));
       tab.setAttribute("aria-controls", "selected-experiment-view");
       tab.id = `experiment-tab-${experiment.id}`;
-      tab.setAttribute("aria-label", `Ver ${experiment.config.symbols.join(", ")}, rentabilidad ${percent.format(experiment.return_percent)} por ciento`);
-      tab.title = experiment.error || `${experiment.config.symbols.join(", ")} · ${experiment.config.interval}`;
+      const name = experimentName(experiment);
+      tab.setAttribute("aria-label", `Ver ${name}, rentabilidad ${percent.format(experiment.return_percent)} por ciento`);
+      tab.title = experiment.error || `${name} · ${experiment.config.interval}`;
       const identity = document.createElement("span");
       identity.className = "experiment-tab-identity";
       const symbols = document.createElement("span");
       symbols.className = "experiment-tab-symbols";
-      symbols.textContent = experiment.config.symbols.join(" · ");
+      symbols.textContent = name;
       const detail = document.createElement("small");
       const status = experiment.error ? "Error de datos" : experiment.status === "paused" ? "En pausa" : "En curso";
-      detail.textContent = `${experiment.config.interval} · ${status}`;
+      detail.textContent = `${experiment.config.symbols.join(" · ")} · ${experiment.config.interval} · ${status}`;
       identity.append(symbols, detail);
       const result = document.createElement("strong");
       const returnPercent = Number(experiment.return_percent) || 0;
@@ -320,10 +333,12 @@
     const intervalLabels = { "1m": "1 min", "2m": "2 min", "5m": "5 min", "15m": "15 min", "30m": "30 min", "1h": "1 h", "1d": "1 día" };
     const config = experiment?.config;
     document.getElementById("runtime-strategy").textContent = !config
-      ? "Grid escalonado"
+      ? strategyNames.moving_average_grid
       : config.strategy === "momentum_target"
         ? `Impulso · ${config.entry_trigger_type === "price" ? `€${number(config.entry_price_eur, 2)}` : `+${percent.format(config.entry_change_percent)}%/${config.entry_lookback_candles} velas`} · objetivo neto +${percent.format(config.profit_target_percent)}%`
-        : `Grid ${percent.format(config.grid_step_percent ?? 2)}/${percent.format(config.take_profit_percent ?? 2)}% · ${config.grid_tranches ?? 4} tramos · Stop ${percent.format(config.stop_loss_percent ?? 5)}%`;
+        : config.strategy === "two_candle_profit"
+          ? strategyNames.two_candle_profit
+          : `${strategyNames.moving_average_grid} · ${percent.format(config.grid_step_percent ?? 2)}/${percent.format(config.take_profit_percent ?? 2)}% · Stop ${percent.format(config.stop_loss_percent ?? 5)}%`;
     document.getElementById("runtime-assets").textContent = experiment?.config.symbols.join(" · ") || "";
     document.getElementById("runtime-hint").textContent = experiment?.error || "El worker del servidor sigue activo si cierras esta página. El equipo y el contenedor deben permanecer encendidos.";
     setStatus(experiment);
@@ -398,12 +413,12 @@
       viewButton.type = "button";
       viewButton.className = "session-open-button";
       viewButton.textContent = "Ver";
-      viewButton.setAttribute("aria-label", `Ver experimento ${session.config?.symbols.join(", ") || ""}`);
+      viewButton.setAttribute("aria-label", `Ver experimento ${experimentName(session)}`);
       viewButton.addEventListener("click", () => viewSession(session.id));
       viewCell.append(viewButton);
       row.append(
         makeCell(time(session.started_at, { day: "2-digit", month: "2-digit", year: "numeric" })),
-        makeCell(session.config?.symbols.join(" · ") || "—"),
+        makeCell(experimentName(session)),
         makeCell(`${session.duration_days} días`),
         makeCell(euro(session.initial_balance)),
         makeCell(euro(finalValue)),
@@ -623,6 +638,7 @@
     const config = {
       starting_balance: Number(document.getElementById("starting-balance").value),
       symbols: selected,
+      name: document.getElementById("experiment-name").value.trim() || null,
       strategy: document.getElementById("strategy-mode").value,
       fast_period: Number(document.getElementById("fast-period").value),
       slow_period: Number(document.getElementById("slow-period").value),
@@ -680,6 +696,10 @@
     const entryTriggerType = document.getElementById("entry-trigger-type");
     const updateStrategyFields = () => {
       const selectedStrategy = strategyMode.value;
+      const timeframe = document.getElementById("timeframe");
+      const oneMinuteOnly = selectedStrategy === "two_candle_profit";
+      if (oneMinuteOnly) timeframe.value = "1m";
+      timeframe.disabled = oneMinuteOnly;
       document.querySelectorAll(".strategy-only").forEach((group) => {
         const visible = group.dataset.strategy === selectedStrategy;
         group.hidden = !visible;

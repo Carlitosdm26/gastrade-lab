@@ -21,7 +21,7 @@ from database import (
     Trade,
 )
 from market_data import MarketDataError, SOURCE_NAME, fetch_chart, fetch_eurusd
-from strategy import crossover_signal, threshold_entry_signal
+from strategy import TWO_CANDLE_MIN_NET_PROFIT_PERCENT, crossover_signal, threshold_entry_signal, two_candle_signal
 
 ASSETS = {
     "AAPL": "Apple",
@@ -31,6 +31,7 @@ ASSETS = {
     "TSLA": "Tesla",
 }
 INTERVAL_SECONDS = {"1m": 60, "2m": 120, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "1d": 86400}
+TWO_CANDLE_BUY_ALLOCATION_PERCENT = 20
 POLL_SECONDS = max(30, int(os.getenv("MARKET_POLL_SECONDS", "60")))
 QUOTE_HISTORY_LIMIT = 120
 
@@ -282,6 +283,11 @@ def _process_signals(db, experiment: Experiment, now: float) -> None:
         # Never replay missed signals as a burst of trades after downtime.
         candle = new_candles[-1]
         history = [item for item in candles if item.timestamp <= candle.timestamp]
+        if config.get("strategy") == "two_candle_profit":
+            _process_two_candle_profit(db, experiment, symbol, history, candle, now)
+            cursor.candle_timestamp = candle.timestamp
+            db.flush()
+            continue
         if config.get("strategy", "moving_average_grid") == "momentum_target":
             _process_momentum_target(db, experiment, symbol, history, candle, now)
             cursor.candle_timestamp = candle.timestamp
@@ -439,6 +445,56 @@ def _process_momentum_target(db, experiment: Experiment, symbol: str, history: l
         experiment.cash + holdings_value
     ) * config["allocation_percent"] / 100 / len(config["symbols"])
     _execute_trade(db, experiment, symbol, "buy", close_eur, config["fee_rate"], target_value, now)
+
+
+def _process_two_candle_profit(db, experiment: Experiment, symbol: str, history: list[Candle], candle: Candle, now: float) -> None:
+    config = experiment.config
+    closes_eur = [
+        item.close / (item.eurusd if item.currency == "USD" else 1.0)
+        for item in history
+    ]
+    signal = two_candle_signal(closes_eur)
+    currency_rate = candle.eurusd if candle.currency == "USD" else 1.0
+    close_eur = candle.close / currency_rate
+    position = db.get(Position, {"experiment_id": experiment.id, "symbol": symbol})
+
+    fee_rate = config["fee_rate"]
+    if signal == "sell":
+        minimum_net_sale = position.average_price * (1 + TWO_CANDLE_MIN_NET_PROFIT_PERCENT / 100) if position else 0
+        if position is not None and close_eur * (1 - fee_rate) >= minimum_net_sale:
+            _execute_trade(
+                db,
+                experiment,
+                symbol,
+                "sell",
+                close_eur,
+                fee_rate,
+                0,
+                now,
+                position.quantity,
+            )
+        return
+
+    if signal != "buy" or experiment.cash <= 0:
+        return
+
+    prices = {
+        item.symbol: item.price_eur
+        for item in db.scalars(select(Quote).where(Quote.symbol.in_(config["symbols"]))).all()
+    }
+    holdings_value = sum(
+        item.quantity * prices.get(item.symbol, close_eur if item.symbol == symbol else 0)
+        for item in db.scalars(select(Position).where(Position.experiment_id == experiment.id)).all()
+    )
+    target_value = (
+        experiment.cash + holdings_value
+    ) * config["allocation_percent"] / 100 / len(config["symbols"])
+    exposure = position.quantity * close_eur if position is not None else 0
+    remaining_allocation = max(0, target_value - exposure)
+    tranche_value = target_value * TWO_CANDLE_BUY_ALLOCATION_PERCENT / 100
+    notional = min(tranche_value, remaining_allocation, experiment.cash)
+    if notional > 0:
+        _execute_trade(db, experiment, symbol, "buy", close_eur, fee_rate, notional, now)
 
 
 def _execute_trade(

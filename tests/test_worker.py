@@ -82,9 +82,10 @@ def test_worker_trades_only_after_a_new_completed_candle(monkeypatch):
         position = db.get(Position, {"experiment_id": "worker-test", "symbol": symbol})
         assert len(trades) == 1
         assert trades[0].side == "buy"
+        assert trades[0].notional == 200
         assert position is not None
-        assert abs(position.quantity - 79.92) < 1e-8
-        assert abs(db.get(Experiment, "worker-test").cash - 200) < 1e-8
+        assert abs(position.quantity - 19.98) < 1e-8
+        assert abs(db.get(Experiment, "worker-test").cash - 800) < 1e-8
         assert db.scalar(select(Candle.id).where(Candle.symbol == symbol, Candle.timestamp == next_candle["timestamp"])) is not None
         quote_history = db.scalars(
             select(QuoteHistory).where(QuoteHistory.symbol == symbol).order_by(QuoteHistory.fetched_at)
@@ -181,8 +182,8 @@ def test_worker_processes_multiple_active_experiments_independently(monkeypatch)
         assert len(trades["multi-worker-b"]) == 1
         assert trades["multi-worker-a"][0].side == "buy"
         assert trades["multi-worker-b"][0].side == "buy"
-        assert trades["multi-worker-a"][0].notional == 800
-        assert trades["multi-worker-b"][0].notional == 1600
+        assert trades["multi-worker-a"][0].notional == 200
+        assert trades["multi-worker-b"][0].notional == 400
         assert {("MULTIQUOTE", "5m"), ("MULTIQUOTE", "1m")} <= set(fetched)
 
 
@@ -506,6 +507,90 @@ def test_momentum_target_only_sells_after_net_profit_target():
         assert db.get(Position, {"experiment_id": experiment_id, "symbol": symbol}) is None
 
 
+def test_two_candle_profit_buys_on_rise_and_sells_only_net_profitable_fall():
+    init_db()
+    now = time.time()
+    symbol = "TWO-CANDLE"
+    experiment_id = "two-candle-profit"
+
+    def candle(timestamp, close):
+        return Candle(
+            symbol=symbol, interval="1m", timestamp=timestamp,
+            open=close, high=close, low=close, close=close, volume=1000,
+            currency="EUR", eurusd=1, source="test",
+        )
+
+    with SessionLocal() as db:
+        experiment = Experiment(
+            id=experiment_id,
+            status="running",
+            created_at=now,
+            started_at=now,
+            initial_balance=1_000,
+            cash=1_000,
+            realized_pnl=0,
+            total_fees=0,
+            config={
+                "symbols": [symbol],
+                "interval": "1m",
+                "fee_rate": 0.001,
+                "allocation_percent": 80,
+                "strategy": "two_candle_profit",
+            },
+            paused_total_seconds=0,
+        )
+        db.add(experiment)
+        db.flush()
+
+        first = candle(now - 60, 100)
+        rising = candle(now, 101)
+        worker._process_two_candle_profit(db, experiment, symbol, [first, rising], rising, now)
+        position = db.get(Position, {"experiment_id": experiment_id, "symbol": symbol})
+        assert position is not None
+        first_buy = db.scalar(select(Trade).where(Trade.experiment_id == experiment_id, Trade.side == "buy"))
+        assert first_buy is not None
+        assert abs(first_buy.notional - 160) < 1e-8
+
+        next_rise = candle(now + 60, 102)
+        worker._process_two_candle_profit(
+            db, experiment, symbol, [rising, next_rise], next_rise, now + 60
+        )
+        position = db.get(Position, {"experiment_id": experiment_id, "symbol": symbol})
+        trades = db.scalars(select(Trade).where(Trade.experiment_id == experiment_id).order_by(Trade.id)).all()
+        assert position is not None
+        assert [trade.side for trade in trades] == ["buy", "buy"]
+        assert 0 < trades[-1].notional < 200
+
+        below_cost = candle(now + 120, position.average_price * 0.999)
+        worker._process_two_candle_profit(
+            db, experiment, symbol,
+            [candle(now + 60, position.average_price * 1.001), below_cost], below_cost, now + 120
+        )
+        assert len(db.scalars(select(Trade).where(Trade.experiment_id == experiment_id)).all()) == 2
+        assert db.get(Position, {"experiment_id": experiment_id, "symbol": symbol}) is not None
+
+        small_profit_price = position.average_price * 1.003 / (1 - experiment.config["fee_rate"])
+        small_profit_fall = candle(now + 180, small_profit_price)
+        worker._process_two_candle_profit(
+            db, experiment, symbol,
+            [candle(now + 120, small_profit_price * 1.01), small_profit_fall], small_profit_fall, now + 180
+        )
+        assert len(db.scalars(select(Trade).where(Trade.experiment_id == experiment_id)).all()) == 2
+        assert db.get(Position, {"experiment_id": experiment_id, "symbol": symbol}) is not None
+
+        minimum_net_sale = position.average_price * (1 + worker.TWO_CANDLE_MIN_NET_PROFIT_PERCENT / 100) / (1 - experiment.config["fee_rate"])
+        profitable_fall = candle(now + 240, minimum_net_sale * 1.001)
+        worker._process_two_candle_profit(
+            db, experiment, symbol,
+            [candle(now + 180, minimum_net_sale * 1.01), profitable_fall], profitable_fall, now + 240
+        )
+        trades = db.scalars(select(Trade).where(Trade.experiment_id == experiment_id).order_by(Trade.id)).all()
+        assert [trade.side for trade in trades] == ["buy", "buy", "sell"]
+        assert trades[-1].price * (1 - experiment.config["fee_rate"]) >= position.average_price * (1 + worker.TWO_CANDLE_MIN_NET_PROFIT_PERCENT / 100)
+        assert experiment.realized_pnl > 0
+        assert db.get(Position, {"experiment_id": experiment_id, "symbol": symbol}) is None
+
+
 @pytest.mark.parametrize(
     ("open_price", "low_price", "close_price", "expected_fill", "catch_up"),
     [
@@ -580,6 +665,7 @@ def test_worker_applies_protective_stop_and_respects_gaps(
                 "fee_rate": 0.001,
                 "allocation_percent": 80,
                 "stop_loss_percent": 5,
+                "grid_step_percent": 10,
                 "duration_days": 30,
             },
             paused_total_seconds=0,

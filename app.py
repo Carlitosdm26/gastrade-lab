@@ -33,7 +33,8 @@ MAX_ACTIVE_EXPERIMENTS = 5
 class SessionConfig(BaseModel):
     starting_balance: float = Field(ge=100, le=1_000_000)
     symbols: list[str] = Field(min_length=1, max_length=3)
-    strategy: Literal["moving_average_grid", "momentum_target"] = "moving_average_grid"
+    name: str | None = Field(default=None, max_length=80)
+    strategy: Literal["moving_average_grid", "momentum_target", "two_candle_profit"] = "moving_average_grid"
     fast_period: int = Field(default=7, ge=2, le=100)
     slow_period: int = Field(default=21, ge=3, le=200)
     interval: str
@@ -52,8 +53,12 @@ class SessionConfig(BaseModel):
 
     @model_validator(mode="after")
     def validate_strategy(self):
+        if self.name is not None:
+            self.name = self.name.strip() or None
         if self.strategy == "moving_average_grid" and self.slow_period <= self.fast_period:
             raise ValueError("La media lenta debe ser mayor que la rápida.")
+        if self.strategy == "two_candle_profit" and self.interval != "1m":
+            raise ValueError("La estrategia de dos velas requiere un intervalo de 1 minuto.")
         if self.strategy == "momentum_target" and self.entry_trigger_type == "price" and self.entry_price_eur is None:
             raise ValueError("Indica el precio objetivo de entrada en EUR.")
         if self.interval not in VALID_INTERVALS:
@@ -63,6 +68,24 @@ class SessionConfig(BaseModel):
         if any(symbol not in ASSETS for symbol in self.symbols):
             raise ValueError("Hay un activo no admitido.")
         return self
+
+
+def _experiment_name(config: dict, created_at: float | None = None) -> str:
+    name = config.get("name")
+    if isinstance(name, str) and name.strip():
+        return name.strip()
+
+    strategy_names = {
+        "moving_average_grid": "Medias móviles + grid escalonado",
+        "momentum_target": "Impulso por umbral + objetivo neto",
+        "two_candle_profit": "Tendencia 1m · entrada +0,25 % · objetivo neto +0,5 %",
+    }
+    strategy_name = strategy_names.get(config.get("strategy"), "Experimento")
+    symbols = " · ".join(config.get("symbols", []))
+    name = f"{strategy_name} · {symbols}" if symbols else strategy_name
+    if created_at is not None:
+        name = f"{name} · {time.strftime('%d/%m %H:%M', time.localtime(created_at))}"
+    return name[:80]
 
 
 @asynccontextmanager
@@ -89,6 +112,8 @@ def _snapshot_row(row: EquitySnapshot) -> dict:
 
 
 def _experiment_summary(db, experiment: Experiment, include_history: bool = True) -> dict:
+    config = dict(experiment.config)
+    config["name"] = _experiment_name(config)
     quotes = {quote.symbol: quote for quote in db.scalars(select(Quote)).all()}
     positions = db.scalars(select(Position).where(Position.experiment_id == experiment.id)).all()
     holdings_value = sum(position.quantity * quotes.get(position.symbol).price_eur for position in positions if quotes.get(position.symbol))
@@ -119,8 +144,9 @@ def _experiment_summary(db, experiment: Experiment, include_history: bool = True
         "started_at": experiment.started_at,
         "completed_at": experiment.completed_at,
         "elapsed_seconds": _elapsed_seconds(experiment, time.time()),
-        "duration_days": experiment.config["duration_days"],
-        "config": experiment.config,
+        "duration_days": config["duration_days"],
+        "name": config["name"],
+        "config": config,
         "initial_balance": experiment.initial_balance,
         "cash": experiment.cash,
         "holdings_value": holdings_value,
@@ -228,6 +254,11 @@ def frontend_script():
     return FileResponse(BASE_DIR / "appClient.js", media_type="text/javascript")
 
 
+@app.get("/favicon.svg")
+def favicon():
+    return FileResponse(BASE_DIR / "favicon.svg", media_type="image/svg+xml")
+
+
 @app.get("/api/health")
 def health():
     with SessionLocal() as db:
@@ -251,6 +282,7 @@ def get_sessions():
             history.append({
                 "id": item.id,
                 "status": item.status,
+                "name": summary["name"],
                 "started_at": item.started_at,
                 "completed_at": item.completed_at,
                 "initial_balance": item.initial_balance,
@@ -283,6 +315,8 @@ def start_session(config: SessionConfig):
         if len(active) >= MAX_ACTIVE_EXPERIMENTS:
             raise HTTPException(status_code=409, detail=f"El límite es de {MAX_ACTIVE_EXPERIMENTS} experimentos activos.")
         now = time.time()
+        stored_config = config.model_dump()
+        stored_config["name"] = _experiment_name(stored_config, now)
         experiment = Experiment(
             id=str(uuid.uuid4()),
             status="running",
@@ -292,7 +326,7 @@ def start_session(config: SessionConfig):
             cash=config.starting_balance,
             realized_pnl=0,
             total_fees=0,
-            config=config.model_dump(),
+            config=stored_config,
             paused_total_seconds=0,
         )
         db.add(experiment)
